@@ -23,7 +23,7 @@ const DAILY_TASKS = [
   { id: "D1", text: "Open the dashboard (this page) and do not start coding." },
   { id: "D2", text: "Review exactly 1 CPD node: click it and scan all 6 status fields." },
   { id: "D3", text: "If any status is wrong, update the CPD text/status (ONLY documentation). Otherwise explicitly confirm 'No change'." },
-  { id: "D4", text: "Check for NICPD drift: ensure no CPD→CPD link exists except 'uses' (optional)." },
+  { id: "D4", text: "Run Validate and check: no CPD→CPD links should exist except type 'uses'. If you see errors about forbidden link types, acknowledge or fix them." },
   { id: "D5", text: "Stop. Close the dashboard." }
 ];
 
@@ -77,6 +77,66 @@ function hashString(str) {
 function getAcknowledgedErrors(weekKey) {
   const stored = localStorage.getItem(`ack_${weekKey}`);
   return stored ? JSON.parse(stored) : {};
+}
+
+function calculateStreaks() {
+  const today = new Date();
+  let dailyStreak = 0;
+  let weeklyStreak = 0;
+  
+  // Calculate daily streak (consecutive days with at least 3 tasks completed)
+  for (let i = 0; i < 365; i++) {
+    const checkDate = new Date(today);
+    checkDate.setDate(checkDate.getDate() - i);
+    const dateKey = checkDate.toISOString().split('T')[0];
+    const state = loadRoutineState(dateKey);
+    const completed = DAILY_TASKS.filter(t => state[t.id]).length;
+    
+    if (i === 0) {
+      // Today: count if at least 3 tasks done
+      if (completed >= 3) {
+        dailyStreak = 1;
+      } else {
+        break;
+      }
+    } else {
+      // Past days: must have at least 3 tasks completed
+      if (completed >= 3) {
+        dailyStreak++;
+      } else {
+        break;
+      }
+    }
+  }
+  
+  // Calculate weekly streak (consecutive weeks with at least 3 tasks completed)
+  for (let w = 0; w < 52; w++) {
+    const checkDate = new Date(today);
+    const day = checkDate.getDay();
+    const diff = checkDate.getDate() - day + (day === 0 ? -6 : 1) - (w * 7); // Monday of week
+    const monday = new Date(checkDate.setDate(diff));
+    const weekKey = monday.toISOString().split('T')[0];
+    const state = loadRoutineState(weekKey);
+    const completed = WEEKLY_TASKS.filter(t => state[t.id]).length;
+    
+    if (w === 0) {
+      // This week: count if at least 3 tasks done
+      if (completed >= 3) {
+        weeklyStreak = 1;
+      } else {
+        break;
+      }
+    } else {
+      // Past weeks: must have at least 3 tasks completed
+      if (completed >= 3) {
+        weeklyStreak++;
+      } else {
+        break;
+      }
+    }
+  }
+  
+  return { dailyStreak, weeklyStreak };
 }
 
 function acknowledgeError(message, reason, weekKey) {
@@ -133,6 +193,22 @@ function renderRoutines() {
   const dailyState = loadRoutineState(todayKey);
   const weeklyState = loadRoutineState(weekKey);
   const acks = getAcknowledgedErrors(weekKey);
+  const streaks = calculateStreaks();
+  
+  // Render streak banner
+  let streakHtml = `
+    <div style="margin-bottom: 16px; padding: 12px; background: rgba(102, 204, 255, 0.1); border: 1px solid rgba(102, 204, 255, 0.3); border-radius: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">🔥 Streak</div>
+          <div style="font-size: 18px; font-weight: 700; color: var(--text);">
+            ${streaks.dailyStreak} day${streaks.dailyStreak !== 1 ? 's' : ''} • ${streaks.weeklyStreak} week${streaks.weeklyStreak !== 1 ? 's' : ''}
+          </div>
+        </div>
+        <div style="font-size: 24px;">🔥</div>
+      </div>
+    </div>
+  `;
   
   // Render daily
   let dailyHtml = `
@@ -166,7 +242,6 @@ function renderRoutines() {
       </div>
     </div>
   `;
-  routineDaily.innerHTML = dailyHtml;
   
   // Render weekly
   const showW5 = isWithin14DaysBeforeVacation();
