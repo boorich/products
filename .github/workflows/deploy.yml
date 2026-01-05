@@ -28,18 +28,21 @@ jobs:
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
+        continue-on-error: true
       
       - name: Copy public files to root
         run: |
-          cp -r public/* .
+          mkdir -p _site
+          cp -r public/* _site/
           # Also copy docs for templates
-          mkdir -p docs
-          cp -r docs/tempates docs/ 2>/dev/null || true
+          if [ -d "docs" ]; then
+            cp -r docs _site/ 2>/dev/null || true
+          fi
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
       
       - name: Deploy to GitHub Pages
         id: deployment
