@@ -559,8 +559,10 @@ async function loadAndRenderTemplate(type) {
   // Try multiple possible paths for GitHub Pages
   const possiblePaths = [
     `docs/templates/${type}_TEMPLATE.md`,
+    `docs/tempates/${type}_TEMPLATE.md`, // Handle typo in directory name
     `/${type}_TEMPLATE.md`,
-    `../docs/templates/${type}_TEMPLATE.md`
+    `../docs/templates/${type}_TEMPLATE.md`,
+    `../docs/tempates/${type}_TEMPLATE.md`
   ];
   
   let markdown = null;
@@ -849,7 +851,7 @@ function renderTemplateForm(type, templateData) {
   // Initialize whatIsNot list (start with 1 empty field)
   window.whatIsNotCount = 1;
   setTimeout(() => {
-    updateWhatIsNotList();
+    window.updateWhatIsNotList();
     // Form submit handler
     document.getElementById("nodeForm").addEventListener("submit", (e) => {
       e.preventDefault();
