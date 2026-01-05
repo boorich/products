@@ -28,13 +28,32 @@ const CPD_STATUS_FIELDS = [
   { key: "operationalOwnership", label: "Operational Ownership" }
 ];
 
-// Daily tasks are now field-specific and auto-complete
-const DAILY_TASKS = CPD_STATUS_FIELDS.map(field => ({
-  id: `review_${field.key}`,
-  fieldKey: field.key,
-  label: field.label,
-  text: `Review and refresh: ${field.label}`
-}));
+const CCD_STATUS_FIELDS = [
+  { key: "userAudienceEvidence", label: "User Audience Evidence" },
+  { key: "problemDefinitionClarity", label: "Problem Definition Clarity" },
+  { key: "adoptionEvidence", label: "Adoption Evidence" },
+  { key: "productizationEligibility", label: "Productization Eligibility" },
+  { key: "ownershipStatus", label: "Ownership Status" },
+  { key: "standardizationRisk", label: "Standardization Risk" }
+];
+
+// Daily tasks - one per status field (CPD + CCD)
+const DAILY_TASKS = [
+  ...CPD_STATUS_FIELDS.map(field => ({
+    id: `review_cpd_${field.key}`,
+    fieldKey: field.key,
+    label: field.label,
+    nodeType: "CPD",
+    text: `Review: ${field.label}`
+  })),
+  ...CCD_STATUS_FIELDS.map(field => ({
+    id: `review_ccd_${field.key}`,
+    fieldKey: field.key,
+    label: field.label,
+    nodeType: "CCD",
+    text: `Review: ${field.label}`
+  }))
+];
 
 const WEEKLY_TASKS = [
   { id: "W1", text: "Run Validate and review all Errors/Warnings." },
@@ -228,8 +247,12 @@ function renderRoutines() {
   
   DAILY_TASKS.forEach(task => {
     const checked = dailyState[task.id] || false;
-    const field = CPD_STATUS_FIELDS.find(f => f.key === task.fieldKey);
-    const shortLabel = field ? field.label.split(' ').slice(-1)[0] : task.label;
+    const field = task.nodeType === "CPD" 
+      ? CPD_STATUS_FIELDS.find(f => f.key === task.fieldKey)
+      : CCD_STATUS_FIELDS.find(f => f.key === task.fieldKey);
+    // Use last word of label for short display
+    const shortLabel = field ? field.label.split(' ').slice(-1)[0] : (task.label.split(' ').slice(-1)[0] || task.label);
+    const typePrefix = task.nodeType === "CPD" ? "CPD: " : "CCD: ";
     
     dailyHtml += `
       <div style="padding: 10px; background: ${checked ? 'rgba(153, 255, 153, 0.15)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${checked ? 'rgba(153, 255, 153, 0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 8px; transition: all 0.2s;">
@@ -238,7 +261,7 @@ function renderRoutines() {
             ${checked ? '✓' : ''}
           </div>
           <div style="flex: 1; font-size: 11px; font-weight: 600; color: ${checked ? 'var(--muted)' : 'var(--text)'}; ${checked ? 'text-decoration: line-through;' : ''}">
-            ${escapeHtml(shortLabel)}
+            ${escapeHtml(typePrefix + shortLabel)}
           </div>
         </div>
         <div style="font-size: 9px; color: var(--muted); margin-left: 28px;">
@@ -410,15 +433,6 @@ function initGraph() {
     state["W1"] = true;
     saveRoutineState(weekKey, state);
     
-    // Passive trigger: When validation runs, mark all status fields as reviewed
-    // (user is actively checking product health)
-    const todayKey = getTodayKey();
-    const dailyState = loadRoutineState(todayKey);
-    CPD_STATUS_FIELDS.forEach(field => {
-      dailyState[`review_${field.key}`] = true;
-    });
-    saveRoutineState(todayKey, dailyState);
-    
     renderRoutines();
   });
 
@@ -516,38 +530,63 @@ function showNode(d) {
   panelContent.classList.remove("hidden");
   hideIntro();
 
+  // Store current node globally
+  window.currentNode = d;
+  
   if (d.type === "CPD") {
     renderCPD(d);
-    // Auto-complete daily tasks when viewing a CPD
-    markStatusFieldsReviewed(d);
   }
   if (d.type === "CCD") renderCCD(d);
   
   // Routines stay visible (already rendered at top)
 }
 
-function markStatusFieldReviewed(fieldKey) {
-  const todayKey = getTodayKey();
-  const state = loadRoutineState(todayKey);
-  state[`review_${fieldKey}`] = true;
-  saveRoutineState(todayKey, state);
-  renderRoutines();
-}
-
-function markStatusFieldsReviewed(node) {
-  if (node.type !== "CPD") return;
+window.openNodeDocument = function(node, fieldKey) {
+  const repoInfo = getGitHubRepoInfo();
+  let owner, repo;
   
-  const todayKey = getTodayKey();
-  const state = loadRoutineState(todayKey);
-  const status = node.status || node.cpd?.status || {};
-  
-  // Mark each status field as reviewed when viewing the CPD
-  CPD_STATUS_FIELDS.forEach(field => {
-    if (status[field.key] !== undefined) {
-      state[`review_${field.key}`] = true;
+  if (repoInfo && repoInfo.owner && repoInfo.repo) {
+    owner = repoInfo.owner;
+    repo = repoInfo.repo;
+  } else {
+    // Fallback: try to construct from current URL (GitHub Pages format)
+    const hostname = window.location.hostname;
+    if (hostname.includes('github.io')) {
+      const parts = hostname.split('.');
+      owner = parts[0];
+      const pathParts = window.location.pathname.split('/').filter(p => p);
+      repo = pathParts[0] || 'capability-system';
+    } else {
+      alert("GitHub repository info not configured. Please set it up in the Create New flow, or manually open the document in GitHub.");
+      return;
     }
-  });
+  }
   
+  // Construct GitHub file URL - documents are stored in docs/ directory
+  // Try both possible paths (with and without subdirectories)
+  const docPath = node.type === "CPD" 
+    ? `docs/cpds/${node.id}.md`
+    : `docs/ccds/${node.id}.md`;
+  
+  // Also try alternative path (directly in docs/)
+  const altDocPath = `docs/${node.id}.md`;
+  
+  // Try primary path first, fallback to alternative
+  const githubUrl = `https://github.com/${owner}/${repo}/blob/master/${docPath}`;
+  const altGithubUrl = `https://github.com/${owner}/${repo}/blob/master/${altDocPath}`;
+  
+  // Mark task as complete when user opens the document
+  markFieldTaskComplete(node.type, fieldKey);
+  
+  // Open primary URL (user can navigate if file doesn't exist)
+  window.open(githubUrl, '_blank');
+};
+
+function markFieldTaskComplete(nodeType, fieldKey) {
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  const taskId = `review_${nodeType.toLowerCase()}_${fieldKey}`;
+  state[taskId] = true;
   saveRoutineState(todayKey, state);
   renderRoutines();
 }
@@ -590,41 +629,15 @@ function renderCPD(node) {
   const status = c.status || node.status || {};
   const cpdStatusFields = ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"];
   
+  // Store current node globally for document opening
+  window.currentNode = node;
+  
 panelContent.innerHTML += `
     <h3 id="status-section-header">8. Status — Product Maturity Signals</h3>
     <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
-    ${renderStatusTable(status, cpdStatusFields, "CPD")}
+    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CPD document in GitHub.</p>
+    ${renderStatusTable(status, cpdStatusFields, "CPD", node)}
   `;
-  
-  // Set up passive triggers: mark fields as reviewed when status section comes into view
-  setTimeout(() => {
-    setupStatusSectionObserver(node);
-  }, 100);
-}
-
-function setupStatusSectionObserver(node) {
-  if (node.type !== "CPD") return;
-  
-  const statusSection = document.querySelector('[data-status-section="true"]');
-  if (!statusSection) return;
-  
-  // Use Intersection Observer to detect when status section is viewed
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        // User has scrolled to status section - mark all visible fields as reviewed
-        const status = node.status || node.cpd?.status || {};
-        CPD_STATUS_FIELDS.forEach(field => {
-          if (status[field.key] !== undefined) {
-            markStatusFieldReviewed(field.key);
-          }
-        });
-        observer.disconnect(); // Only trigger once
-      }
-    });
-  }, { threshold: 0.3 }); // Trigger when 30% visible
-  
-  observer.observe(statusSection);
 }
 
 function humanize(key) {
@@ -653,18 +666,17 @@ function humanize(key) {
     return "";
   }
 
-function renderStatusTable(status, requiredFields, nodeType = "CPD") {
+function renderStatusTable(status, requiredFields, nodeType = "CPD", node = null) {
   const statusObj = status || {};
   const html = requiredFields.map(field => {
     const value = statusObj[field] ?? "NONE";
     const norm = String(value);
     const cls = statusClass(norm);
-    // Add data attribute and click handler for passive task completion
     const fieldKey = field;
-    const taskId = nodeType === "CPD" ? `review_${fieldKey}` : null;
-    const clickHandler = taskId ? `onclick="markStatusFieldReviewed('${fieldKey}')"` : '';
-    const cursorStyle = taskId ? 'cursor: pointer;' : '';
-    const titleAttr = taskId ? `title="Click to mark '${humanize(fieldKey)}' as reviewed"` : '';
+    // Make status field clickable to open document
+    const clickHandler = node ? `onclick="window.openNodeDocument(window.currentNode, '${fieldKey}')"` : '';
+    const cursorStyle = node ? 'cursor: pointer; text-decoration: underline; opacity: 0.9;' : '';
+    const titleAttr = node ? `title="Click to open/edit ${node.type} document for ${humanize(fieldKey)}"` : '';
     return `<div class="k">${escapeHtml(humanize(field))}</div><div class="v ${cls}" data-field="${fieldKey}" ${clickHandler} style="${cursorStyle}" ${titleAttr}>${escapeHtml(norm)}</div>`;
   }).join("");
   return `<div class="kv" data-status-section="true">${html}</div>`;
@@ -702,7 +714,8 @@ function renderCCD(node) {
 
     <h3>8. Status — Concept Maturity Signals</h3>
     <p class="statusExplanation">CCDs do not imply a product commitment. The status fields below indicate where this concept stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable. These values are signals of maturity, not failure.</p>
-    ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"], "CCD")}
+    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CCD document in GitHub.</p>
+    ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"], "CCD", node)}
   `;
 }
 
