@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ChainSafe Product Portfolio Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <header>
+      <div class="title">
+        <span class="title-text">ChainSafe Product Portfolio Dashboard</span>
+    </div>
+      <div class="subtitle">Click a node to see details. Rules will be validated.</div>
+      <div class="toolbar">
+        <button id="btnCreateNew">Create New</button>
+        <button id="btnRecenter">Recenter</button>
+        <button id="btnValidate">Validate</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="graph"></section>
+      <aside id="panel">
+        <div class="panelEmpty">
+          <div class="hint">Click a node.</div>
+          <div class="mini">CPD and CCD are displayed in fixed form.</div>
+        </div>
+        <div id="panelContent" class="hidden"></div>
+        <div id="panelErrors" class="panelErrors hidden"></div>
+      </aside>
+    </main>
+
+    <footer>
+      <div class="legend">
+        <span class="badge cpd">CPD</span>
+        <span class="badge ccd">CCD</span>
+        <span class="edge uses">uses</span>
+        <span class="edge inspired">inspired-by</span>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

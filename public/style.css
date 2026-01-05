@@ -1,0 +1,145 @@
+:root {
+    --bg: #0b0e14;
+    --panel: #101624;
+    --text: #e6e9f2;
+    --muted: #9aa3b2;
+    --line: rgba(230, 233, 242, 0.18);
+    --warn: #ffcc66;
+    --bad: #ff667a;
+  }
+  
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    background: var(--bg);
+    color: var(--text);
+  }
+  
+  header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .title { font-weight: 700; letter-spacing: 0.2px; }
+  .subtitle { color: var(--muted); font-size: 13px; flex: 1; }
+  .toolbar button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { border-color: rgba(230,233,242,0.35); }
+  .templateBtn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .templateBtn:active { transform: translateY(0); }
+  
+  input, textarea, select {
+    font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: 1px solid rgba(102, 204, 255, 0.5);
+    outline-offset: -1px;
+  }
+  
+  main {
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    min-height: calc(100vh - 110px);
+  }
+  
+  #graph { position: relative; }
+  #panel {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    padding: 14px 14px 18px 14px;
+    overflow: auto;
+  }
+  
+  .panelEmpty .hint { font-weight: 700; margin-bottom: 6px; }
+  .panelEmpty .mini { color: var(--muted); font-size: 13px; }
+  
+  .hidden { display: none; }
+  
+  .panelErrors {
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid rgba(255, 102, 122, 0.45);
+    border-radius: 12px;
+    color: var(--bad);
+    background: rgba(255, 102, 122, 0.06);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+  
+  h2 { margin: 0 0 10px 0; font-size: 18px; }
+  h3 { margin: 14px 0 6px 0; font-size: 14px; color: var(--muted); letter-spacing: 0.2px; }
+  p, li { font-size: 13px; line-height: 1.45; color: var(--text); }
+  ul { margin: 8px 0 0 18px; padding: 0; }
+  
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 8px; font-size: 13px; }
+  .k { color: var(--muted); }
+  .v { color: var(--text); }
+  
+  .badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid var(--line);
+    margin-right: 8px;
+  }
+  .badge.cpd { border-color: rgba(102, 204, 255, 0.55); }
+  .badge.ccd { border-color: rgba(153, 255, 153, 0.55); }
+  
+  footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .legend { display: flex; gap: 10px; align-items: center; }
+  .edge { padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; }
+  .edge.uses { border-color: rgba(230,233,242,0.18); }
+  .edge.inspired { border-color: rgba(153,255,153,0.35); }
+
+  .statusNone { color: rgba(255, 102, 122, 0.95); } /* rot: existiert bewusst nicht */
+  .statusTbd { color: rgba(255, 204, 102, 0.95); }  /* gelb: offen */
+  .statusNa { color: rgba(154, 163, 178, 0.95); }   /* muted */
+  .statusExplanation {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+    margin-bottom: 14px;
+    margin-top: 4px;
+    padding: 12px 14px 12px 32px;
+    background: rgba(102, 204, 255, 0.08);
+    border-left: 3px solid rgba(102, 204, 255, 0.4);
+    border-radius: 6px;
+    position: relative;
+  }
+  .statusExplanation::before {
+    content: "ℹ";
+    position: absolute;
+    left: 14px;
+    top: 12px;
+    font-size: 14px;
+    color: rgba(102, 204, 255, 0.7);
+    font-weight: 600;
+  }
+  .statusExplanation strong {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  .systemBanner {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 16px;
+    background: rgba(255,255,255,0.02);
+  }
+  .systemTitle { font-weight: 800; margin-bottom: 4px; }
+  .systemText { color: var(--muted); font-size: 13px; line-height: 1.35; }
+
+  

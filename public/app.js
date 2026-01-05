@@ -1,0 +1,1297 @@
+const width = () => document.getElementById("graph").clientWidth;
+const height = () => document.getElementById("graph").clientHeight || (window.innerHeight - 110);
+
+const panelContent = document.getElementById("panelContent");
+const panelErrors = document.getElementById("panelErrors");
+
+let svg, simulation, data, nodeSel, linkSel;
+
+const RULES = {
+  // NICPD: no implicit mutual definition / no hard depends-on edges between CPDs
+  forbidDependsOnBetweenCPD: true,
+  allowedLinkTypes: new Set(["uses", "inspired-by"])
+};
+
+function load() {
+  fetch("data.json")
+    .then(r => r.json())
+    .then(json => {
+      data = json;
+      initGraph();
+      render();
+      showIntro();
+    });
+}
+
+function initGraph() {
+  const container = document.getElementById("graph");
+  container.innerHTML = "";
+
+  svg = d3.select(container)
+    .append("svg")
+    .attr("width", width())
+    .attr("height", height());
+
+  svg.append("defs").html(`
+    <marker id="arrow" viewBox="0 -5 10 10" refX="18" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,-5L10,0L0,5" fill="rgba(230,233,242,0.28)"></path>
+    </marker>
+  `);
+
+  simulation = d3.forceSimulation(data.nodes)
+    .force("link", d3.forceLink(data.links).id(d => d.id).distance(95).strength(0.8))
+    .force("charge", d3.forceManyBody().strength(-520))
+    .force("center", d3.forceCenter(width() / 2, height() / 2))
+    .force("collide", d3.forceCollide().radius(d => d.type === "CPD" ? 34 : 28));
+
+  window.addEventListener("resize", () => {
+    svg.attr("width", width()).attr("height", height());
+    simulation.force("center", d3.forceCenter(width()/2, height()/2));
+    simulation.alpha(0.6).restart();
+  });
+  
+  // Update SVG size when panel content changes (affects layout)
+  const observer = new MutationObserver(() => {
+    svg.attr("width", width()).attr("height", height());
+    simulation.force("center", d3.forceCenter(width()/2, height()/2));
+  });
+  
+  // Observe the panel for content changes that might affect graph height
+  const panel = document.getElementById("panel");
+  if (panel) {
+    observer.observe(panel, { childList: true, subtree: true });
+  }
+
+  document.getElementById("btnRecenter").addEventListener("click", () => {
+    simulation.alpha(0.8).restart();
+  });
+
+  document.getElementById("btnValidate").addEventListener("click", () => {
+    showValidation(validateSystem(data));
+  });
+
+  document.getElementById("btnCreateNew").addEventListener("click", () => {
+    showCreateForm();
+  });
+}
+
+function render() {
+  linkSel = svg.append("g")
+    .attr("stroke", "rgba(230,233,242,0.18)")
+    .attr("stroke-width", 1.2)
+    .selectAll("line")
+    .data(data.links)
+    .enter()
+    .append("line")
+    .attr("marker-end", "url(#arrow)")
+    .attr("stroke-dasharray", d => d.type === "inspired-by" ? "4 4" : null);
+
+  linkSel.append("title").text(d => {
+      if (d.type === "uses") return "optional usage, no dependency";
+      if (d.type === "inspired-by") return "idea source, no implicit definition";
+      return d.type;
+      });
+
+  nodeSel = svg.append("g")
+    .selectAll("g")
+    .data(data.nodes)
+    .enter()
+    .append("g")
+    .call(drag(simulation))
+    .on("click", (_e, d) => showNode(d));
+
+  nodeSel.append("circle")
+    .attr("r", d => d.type === "CPD" ? 26 : 22)
+    .attr("fill", d => d.type === "CPD" ? "rgba(102,204,255,0.15)" : "rgba(153,255,153,0.12)")
+    .attr("stroke", d => d.type === "CPD" ? "rgba(102,204,255,0.6)" : "rgba(153,255,153,0.55)")
+    .attr("stroke-width", 1.6);
+
+  nodeSel.append("text")
+    .text(d => d.type)
+    .attr("text-anchor", "middle")
+    .attr("dy", 4)
+    .attr("fill", "rgba(230,233,242,0.9)")
+    .attr("font-size", 11)
+    .attr("font-weight", 700);
+
+  nodeSel.append("title").text(d => d.name);
+
+  simulation.on("tick", () => {
+    // Constrain nodes to stay within canvas bounds
+    // Use the actual graph container dimensions (not SVG) to account for layout changes
+    const graphContainer = document.getElementById("graph");
+    const containerWidth = graphContainer.clientWidth;
+    const containerHeight = graphContainer.clientHeight;
+    const nodeRadius = (d) => d.type === "CPD" ? 26 : 22;
+    const padding = 5; // Extra padding from edges
+    
+    data.nodes.forEach(d => {
+      const r = nodeRadius(d);
+      d.x = Math.max(r + padding, Math.min(containerWidth - r - padding, d.x));
+      d.y = Math.max(r + padding, Math.min(containerHeight - r - padding, d.y));
+    });
+    
+    linkSel
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+  });
+
+  // Link labels (minimal)
+  svg.append("g")
+    .selectAll("text")
+    .data(data.links)
+    .enter()
+    .append("text")
+    .attr("fill", "rgba(154,163,178,0.9)")
+    .attr("font-size", 11)
+    .text(d => d.type)
+    .each(function(d) { d._label = this; });
+
+  simulation.on("tick.labels", () => {
+    svg.selectAll("text")
+      .filter(function() { return this.__data__ && this.__data__.source; })
+      .attr("x", d => (d.source.x + d.target.x) / 2)
+      .attr("y", d => (d.source.y + d.target.y) / 2);
+  });
+}
+
+function showNode(d) {
+  document.querySelector(".panelEmpty")?.classList?.add("hidden");
+  panelContent.classList.remove("hidden");
+  hideIntro();
+
+  if (d.type === "CPD") renderCPD(d);
+  if (d.type === "CCD") renderCCD(d);
+}
+
+function renderCPD(node) {
+  const c = node.cpd;
+  panelContent.innerHTML = `
+    <h2><span class="badge cpd">CPD</span>${escapeHtml(node.name)}</h2>
+
+    <h3>1. Product Name</h3>
+    <div class="kv"><div class="k">Name</div><div class="v">${escapeHtml(c.productName)}</div></div>
+
+    <h3>2. What is this product?</h3>
+    <p>${escapeHtml(c.whatIs)}</p>
+
+    <h3>3. What is this product explicitly not?</h3>
+    <ul>${c.whatIsNot.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
+
+    <h3>4. Non-implicit decision</h3>
+    <p><b>${escapeHtml(c.neverImplicit)}</b></p>
+
+    <h3>5. Ownership</h3>
+    <div class="kv">
+      <div class="k">Product Owner</div><div class="v">${escapeHtml(c.ownership.productOwner)}</div>
+      <div class="k">Delivery Owner</div><div class="v">${escapeHtml(c.ownership.deliveryOwner)}</div>
+      <div class="k">Technical Authority</div><div class="v">${escapeHtml(c.ownership.technicalAuthority)}</div>
+    </div>
+
+    <h3>6. Decision Level</h3>
+    <div class="kv">
+      <div class="k">Implementation</div><div class="v">${escapeHtml(c.decisionLevel.implementation)}</div>
+      <div class="k">Scope/Priority</div><div class="v">${escapeHtml(c.decisionLevel.scopePriority)}</div>
+      <div class="k">Lifecycle/Go-No-Go</div><div class="v">${escapeHtml(c.decisionLevel.lifecycleGoNoGo)}</div>
+    </div>
+
+    <h3>7. Lifecycle Stage</h3>
+    <div class="kv"><div class="k">Lifecycle</div><div class="v">${escapeHtml(c.lifecycle)}</div></div>
+  `;
+
+  const status = c.status || node.status || {};
+  const cpdStatusFields = ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"];
+  
+  panelContent.innerHTML += `
+    <h3>8. Status — Product Maturity Signals</h3>
+    <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
+    ${renderStatusTable(status, cpdStatusFields)}
+  `;
+}
+
+function humanize(key) {
+  const map = {
+    "customerResearchData": "Customer Research Data",
+    "valuePropositionClarity": "Value Proposition Clarity",
+    "pricingEconomicModel": "Pricing / Economic Model",
+    "reliabilitySLO": "Reliability SLO",
+    "securityRiskPosture": "Security Risk Posture",
+    "operationalOwnership": "Operational Ownership",
+    "userAudienceEvidence": "User Audience Evidence",
+    "problemDefinitionClarity": "Problem Definition Clarity",
+    "adoptionEvidence": "Adoption Evidence",
+    "productizationEligibility": "Productization Eligibility",
+    "ownershipStatus": "Ownership Status",
+    "standardizationRisk": "Standardization Risk"
+  };
+  return map[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, str => str.toUpperCase()).trim();
+}
+
+function statusClass(v) {
+  const s = String(v).toUpperCase();
+  if (s === "NONE") return "statusNone";
+  if (s === "TBD") return "statusTbd";
+  if (s.startsWith("N/A")) return "statusNa";
+  return "";
+}
+
+function renderStatusTable(status, requiredFields) {
+  const statusObj = status || {};
+  const html = requiredFields.map(field => {
+    const value = statusObj[field] ?? "NONE";
+    const norm = String(value);
+    const cls = statusClass(norm);
+    return `<div class="k">${escapeHtml(humanize(field))}</div><div class="v ${cls}">${escapeHtml(norm)}</div>`;
+  }).join("");
+  return `<div class="kv">${html}</div>`;
+}
+
+function renderCCD(node) {
+  const c = node.ccd;
+  panelContent.innerHTML = `
+    <h2><span class="badge ccd">CCD</span>${escapeHtml(node.name)}</h2>
+
+    <h3>1. Concept Name</h3>
+    <div class="kv"><div class="k">Name</div><div class="v">${escapeHtml(c.conceptName)}</div></div>
+
+    <h3>2. What is this concept?</h3>
+    <p>${escapeHtml(c.whatIs)}</p>
+
+    <h3>3. What is this concept explicitly not?</h3>
+    <ul>${c.whatIsNot.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
+
+    <h3>4. Non-implicit decision</h3>
+    <p><b>${escapeHtml(c.neverImplicit)}</b></p>
+
+    <h3>5. Ownership</h3>
+    <div class="kv">
+      <div class="k">Concept Steward</div><div class="v">${escapeHtml(c.ownership.conceptSteward)}</div>
+      <div class="k">Product Responsibility</div><div class="v">${escapeHtml(c.ownership.productResponsibility)}</div>
+      <div class="k">Economic Responsibility</div><div class="v">${escapeHtml(c.ownership.economicResponsibility)}</div>
+    </div>
+
+    <h3>6. Relationship to Products</h3>
+    <ul>${c.relationshipRules.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
+
+    <h3>7. Maturity</h3>
+    <div class="kv"><div class="k">Maturity</div><div class="v">${escapeHtml(c.maturity)}</div></div>
+
+    <h3>8. Status — Concept Maturity Signals</h3>
+    <p class="statusExplanation">CCDs do not imply a product commitment. The status fields below indicate where this concept stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable. These values are signals of maturity, not failure.</p>
+    ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"])}
+  `;
+}
+
+const CPD_STATUS_KEYS = ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"];
+const CCD_STATUS_KEYS = ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
+
+function validateSystem(data) {
+  const errors = [];
+  const warnings = [];
+  
+  const byId = new Map(data.nodes.map(n => [n.id, n]));
+  
+  // Rule group A — Link invariants (NICPD)
+  for (const l of data.links) {
+    const sourceId = l.source?.id || l.source;
+    const targetId = l.target?.id || l.target;
+    const s = byId.get(sourceId);
+    const t = byId.get(targetId);
+    
+    if (!s || !t) {
+      errors.push(`Fix link: references unknown node ${JSON.stringify(l)}`);
+      continue;
+    }
+    
+    // A1: Allowed link types are ONLY: uses, inspired-by
+    if (!RULES.allowedLinkTypes.has(l.type)) {
+      errors.push(`Change link type from "${l.type}" to "uses" or "inspired-by" for ${s.name} → ${t.name}`);
+    }
+    
+    // A2: depends-on must be rejected explicitly
+    if (l.type === "depends-on") {
+      errors.push(`Remove "depends-on" link between ${s.name} and ${t.name}. Use "uses" for optional relationships instead.`);
+    }
+    
+    // A3: CPD→CPD links are allowed ONLY if type is uses
+    if (s.type === "CPD" && t.type === "CPD" && l.type !== "uses") {
+      errors.push(`Change link type to "uses" for ${s.name} → ${t.name}. CPDs can only have "uses" relationships with other CPDs.`);
+    }
+    
+    // A4: inspired-by MUST NOT be CPD→CPD
+    if (l.type === "inspired-by" && s.type === "CPD" && t.type === "CPD") {
+      errors.push(`Change link type from "inspired-by" to "uses" for ${s.name} → ${t.name}. CPDs cannot be inspired by other CPDs.`);
+    }
+  }
+  
+  // Rule group B — Required status schema
+  for (const node of data.nodes) {
+    const status = node.status || (node.type === "CPD" ? node.cpd?.status : node.ccd?.status) || {};
+    const requiredKeys = node.type === "CPD" ? CPD_STATUS_KEYS : CCD_STATUS_KEYS;
+    const nodeType = node.type;
+    const nodeName = node.name;
+    
+    // B1: Every CPD/CCD must have status object
+    if (!node.status && !(node.type === "CPD" ? node.cpd?.status : node.ccd?.status)) {
+      errors.push(`Add status fields to ${nodeType} "${nodeName}"`);
+      continue;
+    }
+    
+    // B2: Missing any key or empty/null values => ERROR
+    const missingOrEmptyKeys = requiredKeys.filter(key => {
+      return !(key in status) || status[key] === null || status[key] === "";
+    });
+    if (missingOrEmptyKeys.length > 0) {
+      const missingKeys = requiredKeys.filter(key => !(key in status));
+      const emptyKeys = requiredKeys.filter(key => key in status && (status[key] === null || status[key] === ""));
+      
+      if (missingKeys.length > 0) {
+        const fieldNames = missingKeys.map(k => humanize(k)).join(", ");
+        errors.push(`Set ${fieldNames} for ${nodeType} "${nodeName}"`);
+      }
+      if (emptyKeys.length > 0) {
+        const fieldNames = emptyKeys.map(k => humanize(k)).join(", ");
+        errors.push(`Fill in ${fieldNames} for ${nodeType} "${nodeName}" (currently empty)`);
+      }
+    }
+    
+    // B4: Extra keys => WARNING
+    const allKeys = Object.keys(status);
+    const extraKeys = allKeys.filter(key => !requiredKeys.includes(key));
+    if (extraKeys.length > 0) {
+      const fieldNames = extraKeys.map(k => humanize(k)).join(", ");
+      warnings.push(`Remove ${fieldNames} from ${nodeType} "${nodeName}" (not part of ${nodeType} schema)`);
+    }
+  }
+  
+  // Rule group C — Category misuse checks
+  for (const node of data.nodes) {
+    const status = node.status || (node.type === "CPD" ? node.cpd?.status : node.ccd?.status) || {};
+    const nodeName = node.name;
+    
+    if (node.type === "CCD") {
+      // C1: CCD must NOT contain product-only claims
+      if ("pricingEconomicModel" in status) {
+        errors.push(`Remove "Pricing / Economic Model" from CCD "${nodeName}" (product-only field)`);
+      }
+      if ("reliabilitySLO" in status) {
+        errors.push(`Remove "Reliability SLO" from CCD "${nodeName}" (product-only field)`);
+      }
+      if ("operationalOwnership" in status) {
+        errors.push(`Remove "Operational Ownership" from CCD "${nodeName}" (product-only field)`);
+      }
+    }
+    
+    if (node.type === "CPD") {
+      // C2: CPD must NOT contain CCD-only keys (WARNING)
+      if ("productizationEligibility" in status) {
+        warnings.push(`Remove "Productization Eligibility" from CPD "${nodeName}" (concept-only field)`);
+      }
+      if ("standardizationRisk" in status) {
+        warnings.push(`Remove "Standardization Risk" from CPD "${nodeName}" (concept-only field)`);
+      }
+    }
+  }
+  
+  // Rule group D — Risky maturity combinations (WARNINGS only)
+  for (const node of data.nodes) {
+    if (node.type !== "CPD") continue;
+    
+    const status = node.status || node.cpd?.status || {};
+    const nodeName = node.name;
+    
+    // D1: CPD reliabilitySLO is not NONE AND operationalOwnership is NONE or TBD
+    const reliabilitySLO = String(status.reliabilitySLO || "").toUpperCase();
+    const operationalOwnership = String(status.operationalOwnership || "").toUpperCase();
+    if (reliabilitySLO !== "NONE" && reliabilitySLO !== "" && (operationalOwnership === "NONE" || operationalOwnership === "TBD")) {
+      warnings.push(`Define "Operational Ownership" for CPD "${nodeName}" before setting reliability promises`);
+    }
+    
+    // D2: CPD pricingEconomicModel is not NONE AND securityRiskPosture is NONE or TBD
+    const pricingEconomicModel = String(status.pricingEconomicModel || "").toUpperCase();
+    const securityRiskPosture = String(status.securityRiskPosture || "").toUpperCase();
+    if (pricingEconomicModel !== "NONE" && pricingEconomicModel !== "" && pricingEconomicModel !== "N/A" && (securityRiskPosture === "NONE" || securityRiskPosture === "TBD")) {
+      warnings.push(`Define "Security Risk Posture" for CPD "${nodeName}" before setting pricing model`);
+    }
+  }
+  
+  for (const node of data.nodes) {
+    if (node.type !== "CCD") continue;
+    
+    const status = node.status || node.ccd?.status || {};
+    const nodeName = node.name;
+    
+    // D3: CCD productizationEligibility equals ELIGIBLE AND ownershipStatus equals NONE
+    const productizationEligibility = String(status.productizationEligibility || "").toUpperCase();
+    const ownershipStatus = String(status.ownershipStatus || "").toUpperCase();
+    if (productizationEligibility === "ELIGIBLE" && ownershipStatus === "NONE") {
+      warnings.push(`Assign "Ownership Status" to CCD "${nodeName}" since it's marked as productization-eligible`);
+    }
+  }
+  
+  return { errors, warnings };
+}
+
+function showIntro() {
+  panelErrors.classList.remove("hidden");
+  panelErrors.innerHTML = `
+    <div style="line-height: 1.6;">
+      <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 15px; color: var(--text);">About This Tool</h3>
+      <p style="margin-bottom: 12px; font-size: 13px;">This dashboard visualizes ChainSafe's product system through <strong>CPDs</strong> (Canonical Product Definitions) and <strong>CCDs</strong> (Canonical Concept Definitions). Each node represents a product or concept with defined boundaries, ownership, and maturity status.</p>
+      <p style="margin-bottom: 12px; font-size: 13px;"><strong>Why use it?</strong> This system makes product commitments explicit and prevents implicit dependencies. It helps teams understand what is a product (with responsibility and risk) versus what is a concept (exploratory, no commitment).</p>
+      <p style="margin-bottom: 0; font-size: 13px;"><strong>How we think about products:</strong> At ChainSafe, products carry explicit ownership, decision authority, and maturity signals. Concepts can inspire products but don't create obligations. This framework ensures clarity, accountability, and intentional product development.</p>
+    </div>
+  `;
+}
+
+function hideIntro() {
+  // Only hide if it's showing intro (not validation results)
+  const currentContent = panelErrors.innerHTML;
+  if (currentContent && currentContent.includes("About This Tool")) {
+    panelErrors.classList.add("hidden");
+    panelErrors.innerHTML = "";
+  }
+}
+
+function showValidation(result) {
+  hideIntro();
+  
+  // Handle legacy format (array of errors)
+  if (Array.isArray(result)) {
+    const errors = result;
+    if (!errors || errors.length === 0) {
+      panelErrors.classList.remove("hidden");
+      panelErrors.innerHTML = `<div style="color: rgba(153, 255, 153, 0.8);">✅ No issues found.</div>`;
+      return;
+    }
+    panelErrors.classList.remove("hidden");
+    panelErrors.innerHTML = `<b>Validation Errors</b><ul>${errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
+    return;
+  }
+  
+  // Handle new format (object with errors and warnings)
+  const { errors = [], warnings = [] } = result;
+  
+  if (errors.length === 0 && warnings.length === 0) {
+    panelErrors.classList.remove("hidden");
+    panelErrors.innerHTML = `<div style="color: rgba(153, 255, 153, 0.8);">✅ No issues found.</div>`;
+    return;
+  }
+  
+  panelErrors.classList.remove("hidden");
+  let html = `<b>Validation Results</b>`;
+  
+  if (errors.length > 0) {
+    html += `<div style="margin-top: 8px;"><b>Errors (${errors.length})</b><ul style="margin-top: 4px;">${errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`;
+  }
+  
+  if (warnings.length > 0) {
+    html += `<div style="margin-top: ${errors.length > 0 ? '12px' : '8px'};"><b>Warnings (${warnings.length})</b><ul style="margin-top: 4px;">${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>`;
+  }
+  
+  panelErrors.innerHTML = html;
+}
+
+function drag(sim) {
+  function dragstarted(event, d) {
+    if (!event.active) sim.alphaTarget(0.3).restart();
+    d.fx = d.x; d.fy = d.y;
+  }
+  function dragged(event, d) {
+    d.fx = event.x; d.fy = event.y;
+  }
+  function dragended(event, d) {
+    if (!event.active) sim.alphaTarget(0);
+    d.fx = null; d.fy = null;
+  }
+  return d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended);
+}
+
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// Template and form creation system
+let currentTemplateType = null;
+let templateData = null;
+
+async function showCreateForm() {
+  // Show template selection
+  document.querySelector(".panelEmpty")?.classList?.add("hidden");
+  panelContent.classList.remove("hidden");
+  hideIntro();
+  
+  panelContent.innerHTML = `
+    <h2>Create New Node</h2>
+    <p style="margin-bottom: 16px;">Choose a template to create a new CPD or CCD:</p>
+    <div style="display: flex; gap: 12px; flex-direction: column;">
+      <button class="templateBtn" data-type="CPD" style="padding: 12px; background: rgba(102, 204, 255, 0.1); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 8px; color: var(--text); cursor: pointer;">
+        <strong>CPD - Canonical Product Definition</strong><br>
+        <span style="font-size: 12px; color: var(--muted);">Create a new product</span>
+      </button>
+      <button class="templateBtn" data-type="CCD" style="padding: 12px; background: rgba(153, 255, 153, 0.1); border: 1px solid rgba(153, 255, 153, 0.4); border-radius: 8px; color: var(--text); cursor: pointer;">
+        <strong>CCD - Canonical Concept Definition</strong><br>
+        <span style="font-size: 12px; color: var(--muted);">Create a new concept</span>
+      </button>
+    </div>
+  `;
+  
+  // Add event listeners
+  document.querySelectorAll(".templateBtn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const type = e.currentTarget.dataset.type;
+      await loadAndRenderTemplate(type);
+    });
+  });
+}
+
+async function loadAndRenderTemplate(type) {
+  currentTemplateType = type;
+  // Try multiple possible paths for GitHub Pages
+  const possiblePaths = [
+    `docs/templates/${type}_TEMPLATE.md`,
+    `/${type}_TEMPLATE.md`,
+    `../docs/templates/${type}_TEMPLATE.md`
+  ];
+  
+  let markdown = null;
+  let lastError = null;
+  
+  for (const templatePath of possiblePaths) {
+    try {
+      const response = await fetch(templatePath);
+      if (response.ok) {
+        markdown = await response.text();
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+  }
+  
+  if (!markdown) {
+    // If template loading fails, create form from known structure
+    templateData = createDefaultTemplateData(type);
+    renderTemplateForm(type, templateData);
+    return;
+  }
+  
+  try {
+    templateData = parseTemplate(markdown, type);
+    renderTemplateForm(type, templateData);
+  } catch (error) {
+    // Fallback to default template
+    templateData = createDefaultTemplateData(type);
+    renderTemplateForm(type, templateData);
+  }
+}
+
+function createDefaultTemplateData(type) {
+  return {
+    type: type,
+    fields: {
+      name: "",
+      whatIs: "",
+      whatIsNot: [],
+      neverImplicit: "",
+      status: type === "CPD" ? {
+        customerResearchData: "NONE",
+        valuePropositionClarity: "TBD",
+        pricingEconomicModel: "TBD",
+        reliabilitySLO: "NONE",
+        securityRiskPosture: "TBD",
+        operationalOwnership: "TBD"
+      } : {
+        userAudienceEvidence: "NONE",
+        problemDefinitionClarity: "TBD",
+        adoptionEvidence: "NONE",
+        productizationEligibility: "NOT ELIGIBLE",
+        ownershipStatus: "NONE",
+        standardizationRisk: "HIGH"
+      }
+    }
+  };
+}
+
+function parseTemplate(markdown, type) {
+  const data = {
+    type: type,
+    fields: {}
+  };
+  
+  // Extract product/concept name
+  const nameMatch = markdown.match(/\*\*Name:\*\*\s*`<([^>]+)>`/);
+  if (nameMatch) data.fields.name = "";
+  
+  // Extract "what is" (paragraph after "## 2. What is")
+  const whatIsMatch = markdown.match(/## 2\. What is this (product|concept)\?\s*`<([^>]+)>`/s);
+  if (whatIsMatch) data.fields.whatIs = "";
+  
+  // Extract "what is not" (list items)
+  const whatIsNotMatch = markdown.match(/## 3\. What is this (product|concept) explicitly not\?\s*((?:- `<[^>]+>`\s*)+)/s);
+  if (whatIsNotMatch) {
+    const items = whatIsNotMatch[2].match(/- `<([^>]+)>`/g) || [];
+    data.fields.whatIsNot = items.map(item => item.match(/`<([^>]+)>`/)[1]).filter(t => t !== "NOT 1" && t !== "NOT 2");
+  }
+  
+  // Extract neverImplicit
+  const neverImplicitMatch = markdown.match(/## 4\. Decision that must never be implicit\s*> `<([^>]+)>`/s);
+  if (neverImplicitMatch) data.fields.neverImplicit = "";
+  
+  // Extract ownership fields
+  if (type === "CPD") {
+    const ownerMatch = markdown.match(/- \*\*Product Owner:\*\* `<([^>]+)>`/);
+    if (ownerMatch) data.fields.productOwner = "";
+    const deliveryMatch = markdown.match(/- \*\*Delivery Owner:\*\* `<([^>]+)>`/);
+    if (deliveryMatch) data.fields.deliveryOwner = "";
+    const techMatch = markdown.match(/- \*\*Technical Authority:\*\* `<([^>]+)>`/);
+    if (techMatch) data.fields.technicalAuthority = "";
+  } else {
+    const stewardMatch = markdown.match(/- \*\*Concept Steward:\*\* `<([^>]+)>`/);
+    if (stewardMatch) data.fields.conceptSteward = "";
+    data.fields.productResponsibility = "NONE";
+    data.fields.economicResponsibility = "NONE";
+  }
+  
+  // Extract decision level (CPD only)
+  if (type === "CPD") {
+    data.fields.implementation = "TEAM";
+    data.fields.scopePriority = "OWNER";
+    data.fields.lifecycleGoNoGo = "EXPLICIT_ONLY";
+  }
+  
+  // Extract lifecycle/maturity
+  if (type === "CPD") {
+    const lifecycleMatch = markdown.match(/## 7\. Lifecycle\s*`<([^>]+)>`/);
+    if (lifecycleMatch) data.fields.lifecycle = "";
+  } else {
+    const maturityMatch = markdown.match(/## 7\. Maturity\s*`<([^>]+)>`/);
+    if (maturityMatch) data.fields.maturity = "";
+  }
+  
+  // Extract status fields
+  if (type === "CPD") {
+    data.fields.status = {
+      customerResearchData: "NONE",
+      valuePropositionClarity: "TBD",
+      pricingEconomicModel: "TBD",
+      reliabilitySLO: "NONE",
+      securityRiskPosture: "TBD",
+      operationalOwnership: "TBD"
+    };
+  } else {
+    data.fields.status = {
+      userAudienceEvidence: "NONE",
+      problemDefinitionClarity: "TBD",
+      adoptionEvidence: "NONE",
+      productizationEligibility: "NOT ELIGIBLE",
+      ownershipStatus: "NONE",
+      standardizationRisk: "HIGH"
+    };
+  }
+  
+  return data;
+}
+
+function renderTemplateForm(type, templateData) {
+  const fields = templateData.fields;
+  const statusFields = type === "CPD" ? CPD_STATUS_KEYS : CCD_STATUS_KEYS;
+  
+  let html = `
+    <h2><span class="badge ${type.toLowerCase()}">${type}</span>Create New ${type === "CPD" ? "Product" : "Concept"}</h2>
+    <form id="nodeForm" style="margin-top: 16px;">
+  `;
+  
+  // Name
+  html += `
+    <h3>1. ${type === "CPD" ? "Product" : "Concept"} Name</h3>
+    <input type="text" id="field-name" placeholder="Enter ${type === "CPD" ? "product" : "concept"} name" required 
+           style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+  `;
+  
+  // What is
+  html += `
+    <h3>2. What is this ${type === "CPD" ? "product" : "concept"}?</h3>
+    <textarea id="field-whatIs" rows="3" placeholder="One paragraph description" required
+              style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px; resize: vertical;"></textarea>
+  `;
+  
+  // What is not
+  html += `
+    <h3>3. What is this ${type === "CPD" ? "product" : "concept"} explicitly not?</h3>
+    <div id="whatIsNot-list"></div>
+    <button type="button" onclick="addWhatIsNotItem()" style="margin-top: 8px; padding: 6px 12px; background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 12px;">+ Add Item</button>
+  `;
+  
+  // Never implicit
+  html += `
+    <h3>4. Decision that must never be implicit</h3>
+    <textarea id="field-neverImplicit" rows="2" placeholder="Single most dangerous assumption" required
+              style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px; resize: vertical;"></textarea>
+  `;
+  
+  // Ownership
+  html += `<h3>5. Ownership</h3>`;
+  if (type === "CPD") {
+    html += `
+      <div style="display: grid; gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="field-productOwner" placeholder="Product Owner" required
+               style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+        <input type="text" id="field-deliveryOwner" placeholder="Delivery Owner" required
+               style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+        <input type="text" id="field-technicalAuthority" placeholder="Technical Authority" required
+               style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+      </div>
+    `;
+  } else {
+    html += `
+      <div style="display: grid; gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="field-conceptSteward" placeholder="Concept Steward (or TBD)" 
+               style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+      </div>
+    `;
+  }
+  
+  // Decision level (CPD only) or Relationship rules (CCD)
+  if (type === "CPD") {
+    html += `
+      <h3>6. Decision Level</h3>
+      <div style="display: grid; gap: 8px; margin-bottom: 8px;">
+        <select id="field-implementation" style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;">
+          <option value="TEAM">Implementation: TEAM</option>
+        </select>
+        <select id="field-scopePriority" style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;">
+          <option value="OWNER">Scope/Priority: OWNER</option>
+        </select>
+        <select id="field-lifecycleGoNoGo" style="padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;">
+          <option value="EXPLICIT_ONLY">Lifecycle/Go-No-Go: EXPLICIT_ONLY</option>
+        </select>
+      </div>
+    `;
+  } else {
+    html += `
+      <h3>6. Relationship Rules</h3>
+      <p style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">These are fixed rules for CCDs:</p>
+      <ul style="font-size: 12px; color: var(--muted);">
+        <li>Products may use ideas from this concept.</li>
+        <li>Products must not be defined by this concept.</li>
+        <li>This concept may be influenced by product reality.</li>
+        <li>This concept must not replace product decisions.</li>
+      </ul>
+    `;
+  }
+  
+  // Lifecycle/Maturity
+  if (type === "CPD") {
+    html += `
+      <h3>7. Lifecycle Stage</h3>
+      <select id="field-lifecycle" required
+              style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;">
+        <option value="">Select lifecycle stage</option>
+        <option value="Research / Pre-Product">Research / Pre-Product</option>
+        <option value="Incubation / Enablement">Incubation / Enablement</option>
+        <option value="Growth / Early Scale">Growth / Early Scale</option>
+        <option value="Infrastructure / Maintenance">Infrastructure / Maintenance</option>
+      </select>
+    `;
+  } else {
+    html += `
+      <h3>7. Maturity</h3>
+      <select id="field-maturity" required
+              style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;">
+        <option value="">Select maturity</option>
+        <option value="Concept / Folklore">Concept / Folklore</option>
+        <option value="Concept (Validated)">Concept (Validated)</option>
+        <option value="Proto-Standard (Draft)">Proto-Standard (Draft)</option>
+      </select>
+    `;
+  }
+  
+  // Status fields
+  html += `
+    <h3>8. Status — ${type === "CPD" ? "Product" : "Concept"} Maturity Signals</h3>
+    <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">Set initial status values (NONE, TBD, N/A, or explicit description)</p>
+  `;
+  
+  statusFields.forEach(field => {
+    const humanized = humanize(field);
+    html += `
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;">${humanized}</label>
+        <input type="text" id="status-${field}" value="${fields.status[field]}" 
+               placeholder="NONE, TBD, N/A, or description"
+               style="width: 100%; padding: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 12px;" />
+      </div>
+    `;
+  });
+  
+  // Form buttons
+  html += `
+      <div style="margin-top: 20px; display: flex; gap: 8px; flex-wrap: wrap;">
+        <button type="submit" style="flex: 1; padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer; font-weight: 600;">Generate JSON</button>
+        <button type="button" onclick="showCreateForm()" style="padding: 10px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--text); cursor: pointer;">Cancel</button>
+      </div>
+    </form>
+  `;
+  
+  panelContent.innerHTML = html;
+  
+  // Initialize whatIsNot list (start with 1 empty field)
+  window.whatIsNotCount = 1;
+  setTimeout(() => {
+    updateWhatIsNotList();
+    // Form submit handler
+    document.getElementById("nodeForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      generateAndExportJSON(type);
+    });
+  }, 0);
+}
+
+// Make functions globally accessible
+window.addWhatIsNotItem = function() {
+  window.whatIsNotCount = (window.whatIsNotCount || 0) + 1;
+  updateWhatIsNotList();
+};
+
+window.updateWhatIsNotList = function() {
+  const container = document.getElementById("whatIsNot-list");
+  if (!container) return;
+  
+  let html = "";
+  const count = window.whatIsNotCount || 1;
+  for (let i = 0; i < count; i++) {
+    html += `
+      <input type="text" id="whatIsNot-${i}" placeholder="Not ${i + 1}" 
+             style="width: 100%; padding: 6px; margin-bottom: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 12px;" />
+    `;
+  }
+  container.innerHTML = html;
+};
+
+function generateAndExportJSON(type) {
+  const form = document.getElementById("nodeForm");
+  const formData = new FormData(form);
+  
+  // Collect whatIsNot items
+  const whatIsNot = [];
+  for (let i = 0; i < (window.whatIsNotCount || 1); i++) {
+    const input = document.getElementById(`whatIsNot-${i}`);
+    if (input && input.value.trim()) {
+      whatIsNot.push(input.value.trim());
+    }
+  }
+  
+  // Collect status fields
+  const statusFields = type === "CPD" ? CPD_STATUS_KEYS : CCD_STATUS_KEYS;
+  const status = {};
+  statusFields.forEach(field => {
+    const input = document.getElementById(`status-${field}`);
+    status[field] = input ? input.value.trim() || "NONE" : "NONE";
+  });
+  
+  // Build node object
+  const nodeId = `cpd-${document.getElementById("field-name").value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.replace(/-+/g, "-").replace(/^-|-$/g, "") || 
+                 `ccd-${document.getElementById("field-name").value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.replace(/-+/g, "-").replace(/^-|-$/g, "");
+  
+  let node;
+  if (type === "CPD") {
+    node = {
+      id: nodeId,
+      type: "CPD",
+      name: document.getElementById("field-name").value.trim(),
+      cpd: {
+        productName: document.getElementById("field-name").value.trim(),
+        whatIs: document.getElementById("field-whatIs").value.trim(),
+        whatIsNot: whatIsNot,
+        neverImplicit: document.getElementById("field-neverImplicit").value.trim(),
+        ownership: {
+          productOwner: document.getElementById("field-productOwner").value.trim(),
+          deliveryOwner: document.getElementById("field-deliveryOwner").value.trim(),
+          technicalAuthority: document.getElementById("field-technicalAuthority").value.trim()
+        },
+        decisionLevel: {
+          implementation: document.getElementById("field-implementation").value,
+          scopePriority: document.getElementById("field-scopePriority").value,
+          lifecycleGoNoGo: document.getElementById("field-lifecycleGoNoGo").value
+        },
+        lifecycle: document.getElementById("field-lifecycle").value,
+        status: status
+      }
+    };
+  } else {
+    node = {
+      id: nodeId,
+      type: "CCD",
+      name: document.getElementById("field-name").value.trim(),
+      ccd: {
+        conceptName: document.getElementById("field-name").value.trim(),
+        whatIs: document.getElementById("field-whatIs").value.trim(),
+        whatIsNot: whatIsNot,
+        neverImplicit: document.getElementById("field-neverImplicit").value.trim(),
+        ownership: {
+          conceptSteward: document.getElementById("field-conceptSteward")?.value.trim() || "TBD",
+          productResponsibility: "NONE",
+          economicResponsibility: "NONE"
+        },
+        relationshipRules: [
+          "Products may use ideas from this concept.",
+          "Products must not be defined by this concept.",
+          "This concept may be influenced by product reality.",
+          "This concept must not replace product decisions."
+        ],
+        maturity: document.getElementById("field-maturity").value,
+        status: status
+      }
+    };
+  }
+  
+  // Show export options
+  showExportOptions(node);
+}
+
+function cleanDataForExport(dataObj) {
+  // Clean nodes - remove any D3-added properties
+  const cleanNodes = dataObj.nodes.map(n => {
+    const clean = {
+      id: n.id,
+      type: n.type,
+      name: n.name
+    };
+    if (n.cpd) clean.cpd = JSON.parse(JSON.stringify(n.cpd));
+    if (n.ccd) clean.ccd = JSON.parse(JSON.stringify(n.ccd));
+    if (n.status) clean.status = JSON.parse(JSON.stringify(n.status));
+    return clean;
+  });
+  
+  // Clean links - extract only source, target, type (remove D3 circular refs)
+  const cleanLinks = dataObj.links.map(l => {
+    const sourceId = typeof l.source === 'object' && l.source.id ? l.source.id : l.source;
+    const targetId = typeof l.target === 'object' && l.target.id ? l.target.id : l.target;
+    return {
+      source: sourceId,
+      target: targetId,
+      type: l.type
+    };
+  });
+  
+  return { nodes: cleanNodes, links: cleanLinks };
+}
+
+function getGitHubRepoInfo() {
+  // Try to detect from current URL (GitHub Pages format: owner.github.io/repo)
+  const hostname = window.location.hostname;
+  const pathname = window.location.pathname;
+  
+  // For GitHub Pages: owner.github.io/repo or owner.github.io
+  if (hostname.includes('github.io')) {
+    const parts = hostname.split('.');
+    if (parts.length >= 3) {
+      const owner = parts[0];
+      const repo = pathname.split('/')[1] || 'capability-system';
+      return { owner, repo };
+    }
+  }
+  
+  // Fallback: try to get from localStorage or prompt
+  const stored = localStorage.getItem('githubRepo');
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {}
+  }
+  
+  return null;
+}
+
+function showExportOptions(node) {
+  const jsonString = JSON.stringify(node, null, 2);
+  const cleanedData = cleanDataForExport({ nodes: [...data.nodes, node], links: data.links });
+  const fullDataJson = JSON.stringify(cleanedData, null, 2);
+  const repoInfo = getGitHubRepoInfo();
+  const hasGitHubToken = localStorage.getItem('githubToken');
+  
+  panelContent.innerHTML = `
+    <h2>✅ Node Generated</h2>
+    <p style="margin-bottom: 16px;">Your ${node.type} has been generated. Choose an export option:</p>
+    
+    <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
+      ${hasGitHubToken && repoInfo ? `
+      <button onclick="commitToGitHub()" style="padding: 10px; background: rgba(102, 204, 255, 0.3); border: 2px solid rgba(102, 204, 255, 0.6); border-radius: 6px; color: var(--text); cursor: pointer; font-weight: 600;">
+        🚀 Commit to GitHub
+      </button>
+      ` : `
+      <button onclick="setupGitHubAuth()" style="padding: 10px; background: rgba(255, 204, 102, 0.2); border: 1px solid rgba(255, 204, 102, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">
+        ⚙️ Setup GitHub Integration
+      </button>
+      `}
+      <button onclick="downloadNodeJSON()" style="padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">
+        📥 Download Node JSON
+      </button>
+      <button onclick="copyNodeJSON()" style="padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">
+        📋 Copy Node JSON to Clipboard
+      </button>
+      <button onclick="downloadFullDataJson()" style="padding: 10px; background: rgba(153, 255, 153, 0.2); border: 1px solid rgba(153, 255, 153, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">
+        📥 Download Full data.json (with new node)
+      </button>
+    </div>
+    
+    <details style="margin-top: 16px;">
+      <summary style="cursor: pointer; color: var(--muted); font-size: 12px;">Preview JSON</summary>
+      <pre style="margin-top: 8px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 6px; overflow-x: auto; font-size: 11px; line-height: 1.4;">${escapeHtml(jsonString)}</pre>
+    </details>
+    
+    ${!hasGitHubToken ? `
+    <div style="margin-top: 16px; padding: 12px; background: rgba(255, 204, 102, 0.1); border-left: 3px solid var(--warn); border-radius: 6px;">
+      <p style="font-size: 12px; margin: 0;"><strong>Next steps:</strong></p>
+      <ol style="font-size: 12px; margin: 8px 0 0 18px; padding: 0;">
+        <li>Download or copy the JSON</li>
+        <li>Add the node to <code>public/data.json</code> in the <code>nodes</code> array</li>
+        <li>Commit and push to GitHub</li>
+        <li>The new node will appear in the graph after deployment</li>
+      </ol>
+    </div>
+    ` : ''}
+    
+    <button onclick="showCreateForm()" style="margin-top: 16px; padding: 8px 12px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--text); cursor: pointer;">Create Another</button>
+  `;
+  
+  // Store node data globally for download/copy functions
+  window.generatedNode = node;
+  window.generatedFullData = cleanedData;
+}
+
+window.setupGitHubAuth = function() {
+  const repoInfo = getGitHubRepoInfo();
+  const currentOwner = repoInfo?.owner || '';
+  const currentRepo = repoInfo?.repo || 'capability-system';
+  
+  panelContent.innerHTML = `
+    <h2>⚙️ GitHub Integration Setup</h2>
+    <p style="margin-bottom: 16px; font-size: 13px;">To commit directly from the UI, you need a GitHub Personal Access Token with <code>repo</code> scope.</p>
+    
+    <form id="githubSetupForm" style="display: flex; flex-direction: column; gap: 12px;">
+      <div>
+        <label style="display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;">Repository Owner</label>
+        <input type="text" id="githubOwner" value="${currentOwner}" placeholder="your-username" required
+               style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+      </div>
+      <div>
+        <label style="display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;">Repository Name</label>
+        <input type="text" id="githubRepo" value="${currentRepo}" placeholder="capability-system" required
+               style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+      </div>
+      <div>
+        <label style="display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;">GitHub Personal Access Token</label>
+        <input type="password" id="githubToken" placeholder="ghp_..." required
+               style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
+        <p style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+          Create one at: <a href="https://github.com/settings/tokens" target="_blank" style="color: rgba(102, 204, 255, 0.8);">github.com/settings/tokens</a><br>
+          Required scope: <code>repo</code> (Full control of private repositories)
+        </p>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="submit" style="flex: 1; padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">Save & Test</button>
+        <button type="button" onclick="showExportOptions(window.generatedNode)" style="padding: 10px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--text); cursor: pointer;">Cancel</button>
+      </div>
+    </form>
+    
+    <div style="margin-top: 16px; padding: 12px; background: rgba(255, 102, 122, 0.1); border-left: 3px solid var(--bad); border-radius: 6px;">
+      <p style="font-size: 11px; margin: 0; color: var(--muted);">
+        <strong>⚠️ Security Note:</strong> Your token is stored in browser localStorage. Only use this on trusted devices. 
+        You can clear it anytime by clearing browser data for this site.
+      </p>
+    </div>
+  `;
+  
+  document.getElementById("githubSetupForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const owner = document.getElementById("githubOwner").value.trim();
+    const repo = document.getElementById("githubRepo").value.trim();
+    const token = document.getElementById("githubToken").value.trim();
+    
+    if (!owner || !repo || !token) {
+      alert("Please fill in all fields");
+      return;
+    }
+    
+    // Test the token by making a simple API call
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Invalid token. Please check your Personal Access Token.");
+        } else if (response.status === 404) {
+          throw new Error("Repository not found. Check owner and repo name.");
+        }
+        throw new Error(`GitHub API error: ${response.statusText}`);
+      }
+      
+      // Save credentials
+      localStorage.setItem('githubToken', token);
+      localStorage.setItem('githubRepo', JSON.stringify({ owner, repo }));
+      
+      alert("✅ GitHub integration configured successfully!");
+      showExportOptions(window.generatedNode);
+    } catch (error) {
+      alert(`❌ Setup failed: ${error.message}`);
+    }
+  });
+};
+
+window.commitToGitHub = async function() {
+  const token = localStorage.getItem('githubToken');
+  const repoStr = localStorage.getItem('githubRepo');
+  
+  if (!token || !repoStr) {
+    setupGitHubAuth();
+    return;
+  }
+  
+  const { owner, repo } = JSON.parse(repoStr);
+  const node = window.generatedNode;
+  const fullData = window.generatedFullData;
+  
+  // Show loading state
+  const originalContent = panelContent.innerHTML;
+  panelContent.innerHTML = `
+    <h2>🚀 Committing to GitHub...</h2>
+    <p style="color: var(--muted);">Updating data.json with new ${node.type}...</p>
+    <div style="margin-top: 16px; padding: 12px; background: rgba(102, 204, 255, 0.1); border-radius: 6px;">
+      <p style="font-size: 12px; margin: 0;">This may take a few seconds...</p>
+    </div>
+  `;
+  
+  try {
+    // Step 1: Get current data.json file
+    const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!getFileResponse.ok) {
+      throw new Error(`Failed to get data.json: ${getFileResponse.statusText}`);
+    }
+    
+    const fileData = await getFileResponse.json();
+    const currentContent = JSON.parse(atob(fileData.content.replace(/\s/g, '')));
+    
+    // Step 2: Add new node to the data
+    currentContent.nodes.push(node);
+    
+    // Step 3: Commit the updated file
+    const newContent = JSON.stringify(currentContent, null, 2);
+    const commitMessage = `Add new ${node.type}: ${node.name}`;
+    
+    // Try to detect default branch, fallback to 'main'
+    let branch = 'main';
+    try {
+      const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (repoResponse.ok) {
+        const repoInfo = await repoResponse.json();
+        branch = repoInfo.default_branch || 'main';
+      }
+    } catch (e) {
+      // Fallback to 'main'
+    }
+    
+    const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: commitMessage,
+        content: btoa(unescape(encodeURIComponent(newContent))),
+        sha: fileData.sha,
+        branch: branch
+      })
+    });
+    
+    if (!commitResponse.ok) {
+      const error = await commitResponse.json();
+      throw new Error(error.message || `Commit failed: ${commitResponse.statusText}`);
+    }
+    
+    const commitResult = await commitResponse.json();
+    
+    // Success!
+    panelContent.innerHTML = `
+      <h2>✅ Successfully Committed!</h2>
+      <p style="margin-bottom: 16px;">Your ${node.type} "${node.name}" has been added to the repository.</p>
+      
+      <div style="padding: 12px; background: rgba(153, 255, 153, 0.1); border-left: 3px solid rgba(153, 255, 153, 0.6); border-radius: 6px; margin-bottom: 16px;">
+        <p style="font-size: 12px; margin: 0;">
+          <strong>Commit:</strong> <a href="${commitResult.commit.html_url}" target="_blank" style="color: rgba(102, 204, 255, 0.8);">${commitResult.commit.sha.substring(0, 7)}</a><br>
+          <strong>Message:</strong> ${escapeHtml(commitMessage)}
+        </p>
+      </div>
+      
+      <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
+        The new node will appear in the graph after GitHub Pages rebuilds (usually within a minute).
+      </p>
+      
+      <button onclick="showCreateForm()" style="padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer;">Create Another</button>
+    `;
+  } catch (error) {
+    panelContent.innerHTML = `
+      <h2>❌ Commit Failed</h2>
+      <p style="color: var(--bad); margin-bottom: 16px;">${escapeHtml(error.message)}</p>
+      <button onclick="showExportOptions(window.generatedNode)" style="padding: 10px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--text); cursor: pointer;">Go Back</button>
+    `;
+  }
+};
+
+window.downloadNodeJSON = function() {
+  const blob = new Blob([JSON.stringify(window.generatedNode, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${window.generatedNode.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+window.copyNodeJSON = function() {
+  navigator.clipboard.writeText(JSON.stringify(window.generatedNode, null, 2)).then(() => {
+    alert("✅ Node JSON copied to clipboard!");
+  });
+};
+
+window.downloadFullDataJson = function() {
+  const blob = new Blob([JSON.stringify(window.generatedFullData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "data.json";
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+load();
+

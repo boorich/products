@@ -1,0 +1,152 @@
+{
+    "nodes": [
+      {
+        "id": "cpd-ocr",
+        "type": "CPD",
+        "name": "Open Creator Rails (OCR)",
+        "cpd": {
+          "productName": "Open Creator Rails (OCR)",
+          "whatIs": "Open Creator Rails is a production-ready, on-chain access and monetization runtime system that makes time-limited access rights to game resources deterministically manageable and verifiable for creators and developers.",
+          "whatIsNot": [
+            "Not a research project",
+            "Not an experimentation or prototyping framework",
+            "Not a general identity or authentication product",
+            "Not a payment gateway or financial product",
+            "Not a creator marketplace or SaaS offering"
+          ],
+          "neverImplicit": "The decision of which states, data structures, and processes are irreversibly recorded on-chain must never be made implicitly.",
+          "ownership": {
+            "productOwner": "ChainSafe Systems (OCR Product)",
+            "deliveryOwner": "OCR Delivery (grant-bound)",
+            "technicalAuthority": "Core Protocol & Runtime Leads"
+          },
+          "decisionLevel": {
+            "implementation": "TEAM",
+            "scopePriority": "OWNER",
+            "lifecycleGoNoGo": "EXPLICIT_ONLY"
+          },
+          "lifecycle": "Growth / Early Scale",
+          "status": {
+            "customerResearchData": "NONE",
+            "valuePropositionClarity": "TBD",
+            "pricingEconomicModel": "TBD",
+            "reliabilitySLO": "NONE",
+            "securityRiskPosture": "TBD",
+            "operationalOwnership": "TBD"
+          }
+        }
+      },
+      {
+        "id": "cpd-canton-mcp",
+        "type": "CPD",
+        "name": "Canton Network MCP Server",
+        "cpd": {
+          "productName": "Canton Network MCP Server",
+          "whatIs": "The Canton Network MCP Server is a paid Canton application that provides developers with programmatic access to Canton-specific blockchain functionality via the Model Context Protocol (MCP) and bills usage through x402-based payment headers.",
+          "whatIsNot": [
+            "Not a free internal enablement tool",
+            "Not an SDK replacement for direct Canton integration",
+            "Not a generic MCP backend without economic semantics",
+            "Not an experimental prototype without billing logic",
+            "Not a product with implicit or blanket usage rights"
+          ],
+          "neverImplicit": "The decision of which MCP operations are paid and how their billing units are defined must never be made implicitly.",
+          "ownership": {
+            "productOwner": "ChainSafe Systems (Canton MCP Product)",
+            "deliveryOwner": "Canton App Delivery (Operations)",
+            "technicalAuthority": "Canton App & MCP Runtime Leads"
+          },
+          "decisionLevel": {
+            "implementation": "TEAM",
+            "scopePriority": "OWNER",
+            "lifecycleGoNoGo": "EXPLICIT_ONLY"
+          },
+          "lifecycle": "Growth / Early Scale",
+          "status": {
+            "customerResearchData": "NONE",
+            "valuePropositionClarity": "TBD",
+            "pricingEconomicModel": "TBD",
+            "reliabilitySLO": "NONE",
+            "securityRiskPosture": "TBD",
+            "operationalOwnership": "TBD"
+          }
+        }
+      },
+      {
+        "id": "cpd-x402",
+        "type": "CPD",
+        "name": "Canton x402 Payment Facilitator",
+        "cpd": {
+          "productName": "Canton x402 Payment Facilitator",
+          "whatIs": "The Canton x402 Payment Facilitator is a payment and billing capability that processes x402-compliant payment headers and provides reliable, replay-safe processing for paid tool/API usage.",
+          "whatIsNot": [
+            "Not a product legitimized by OCR or MCP",
+            "Not a place for feature experiments",
+            "Not a marketing vehicle",
+            "Not an implicit standard for all products"
+          ],
+          "neverImplicit": "The decision of which payment and replay semantics are guaranteed (and which are not) must never be made implicitly.",
+          "ownership": {
+            "productOwner": "ChainSafe Systems (x402 Product)",
+            "deliveryOwner": "Payments Delivery (Operations/SLAs if defined)",
+            "technicalAuthority": "Payments & Security Leads"
+          },
+          "decisionLevel": {
+            "implementation": "TEAM",
+            "scopePriority": "OWNER",
+            "lifecycleGoNoGo": "EXPLICIT_ONLY"
+          },
+          "lifecycle": "Infrastructure / Maintenance",
+          "status": {
+            "customerResearchData": "N/A",
+            "valuePropositionClarity": "N/A",
+            "pricingEconomicModel": "N/A",
+            "reliabilitySLO": "TBD",
+            "securityRiskPosture": "TBD",
+            "operationalOwnership": "TBD"
+          }
+        }
+      },
+      {
+        "id": "ccd-dcap",
+        "type": "CCD",
+        "name": "DCAP (Discovery of Capabilities)",
+        "ccd": {
+          "conceptName": "DCAP (Discovery of Capabilities)",
+          "whatIs": "DCAP is a conceptual framework for describing, discovering, and combining capabilities in agentic systems.",
+          "whatIsNot": [
+            "Not a product",
+            "Not a standard",
+            "Not a protocol",
+            "Not a service",
+            "Not a roadmap commitment"
+          ],
+          "neverImplicit": "The decision to treat DCAP as a product, standard, or mandatory layer must never be made implicitly.",
+          "ownership": {
+            "conceptSteward": "TBD",
+            "productResponsibility": "NONE",
+            "economicResponsibility": "NONE"
+          },
+          "relationshipRules": [
+            "Products may use DCAP ideas",
+            "Products must not be defined by DCAP",
+            "DCAP may be influenced by product realities",
+            "DCAP must not replace product decisions"
+          ],
+          "maturity": "Concept / Folklore",
+          "status": {
+            "userAudienceEvidence": "NONE",
+            "problemDefinitionClarity": "TBD",
+            "adoptionEvidence": "NONE",
+            "productizationEligibility": "NOT ELIGIBLE",
+            "ownershipStatus": "NONE",
+            "standardizationRisk": "HIGH"
+          }
+        }
+      }
+    ],
+    "links": [
+      { "source": "cpd-canton-mcp", "target": "cpd-x402", "type": "uses" }
+    ]
+  }
+  
