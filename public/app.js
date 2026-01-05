@@ -18,14 +18,23 @@ const RULES = {
   allowedLinkTypes: new Set(["uses", "inspired-by"])
 };
 
-// Routine system
-const DAILY_TASKS = [
-  { id: "D1", text: "Open the dashboard (this page) and do not start coding." },
-  { id: "D2", text: "Review exactly 1 CPD node: click it and scan all 6 status fields." },
-  { id: "D3", text: "If any status is wrong, update the CPD text/status (ONLY documentation). Otherwise explicitly confirm 'No change'." },
-  { id: "D4", text: "Run Validate and check: no CPD→CPD links should exist except type 'uses'. If you see errors about forbidden link types, acknowledge or fix them." },
-  { id: "D5", text: "Stop. Close the dashboard." }
+// Routine system - Focused on status field maintenance
+const CPD_STATUS_FIELDS = [
+  { key: "customerResearchData", label: "Customer Research Data" },
+  { key: "valuePropositionClarity", label: "Value Proposition Clarity" },
+  { key: "pricingEconomicModel", label: "Pricing / Economic Model" },
+  { key: "reliabilitySLO", label: "Reliability SLO" },
+  { key: "securityRiskPosture", label: "Security Risk Posture" },
+  { key: "operationalOwnership", label: "Operational Ownership" }
 ];
+
+// Daily tasks are now field-specific and auto-complete
+const DAILY_TASKS = CPD_STATUS_FIELDS.map(field => ({
+  id: `review_${field.key}`,
+  fieldKey: field.key,
+  label: field.label,
+  text: `Review and refresh: ${field.label}`
+}));
 
 const WEEKLY_TASKS = [
   { id: "W1", text: "Run Validate and review all Errors/Warnings." },
@@ -210,46 +219,41 @@ function renderRoutines() {
     </div>
   `;
   
-  // Render daily
+  // Render daily - focused on status field maintenance
   let dailyHtml = `
     <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <h3 style="margin-top: 0;">Routine — Today</h3>
+      <h3 style="margin-top: 0;">Daily Status Review</h3>
+      <p style="font-size: 11px; color: var(--muted); margin-bottom: 12px; margin-top: 4px;">Review CPDs to keep status fields in sync with product health. Tasks auto-complete when you view a CPD.</p>
   `;
   
   DAILY_TASKS.forEach(task => {
     const checked = dailyState[task.id] || false;
+    const status = checked ? "✅" : "⭕";
     dailyHtml += `
-      <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
-        <input type="checkbox" id="daily-${task.id}" ${checked ? 'checked' : ''} 
-               onchange="toggleDailyTask('${task.id}')"
-               style="margin-top: 2px; cursor: pointer;" />
-        <label for="daily-${task.id}" style="flex: 1; font-size: 12px; line-height: 1.4; cursor: pointer;">
-          ${task.id === "D2" ? `
-            ${task.text}
-            <button onclick="pickAndShowCPD()" style="margin-left: 8px; padding: 4px 8px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Pick a CPD for me</button>
-          ` : task.id === "D3" ? `
-            ${task.text}
-            <button onclick="confirmNoChange()" style="margin-left: 8px; padding: 4px 8px; background: rgba(153, 255, 153, 0.2); border: 1px solid rgba(153, 255, 153, 0.4); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Confirm No Change</button>
-          ` : escapeHtml(task.text)}
-        </label>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px; border-radius: 4px; ${checked ? 'background: rgba(153, 255, 153, 0.08);' : ''}">
+        <span style="font-size: 14px; width: 20px; text-align: center;">${status}</span>
+        <span style="flex: 1; font-size: 12px; ${checked ? 'color: var(--muted); text-decoration: line-through;' : 'color: var(--text);'}">
+          ${escapeHtml(task.text)}
+        </span>
       </div>
     `;
   });
   
   dailyHtml += `
-      <div style="margin-top: 12px; display: flex; gap: 8px;">
-        <button onclick="resetToday()" style="padding: 6px 10px; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Reset today</button>
+      <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line);">
+        <button onclick="pickAndShowCPD()" style="width: 100%; padding: 8px; background: rgba(102, 204, 255, 0.15); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600;">Pick a CPD to Review</button>
       </div>
     </div>
   `;
   
-  // Render weekly
+  // Render weekly - hidden by default, collapsible
   const showW5 = isWithin14DaysBeforeVacation();
   const weeklyTasksToShow = showW5 ? WEEKLY_TASKS : WEEKLY_TASKS.slice(0, 4);
   
   let weeklyHtml = `
-    <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <h3 style="margin-top: 0;">Routine — This Week</h3>
+    <details style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
+      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">Routine — This Week (expand)</summary>
+      <div style="margin-top: 12px;">
   `;
   
   weeklyTasksToShow.forEach(task => {
@@ -284,14 +288,15 @@ function renderRoutines() {
       <div style="margin-top: 12px; display: flex; gap: 8px;">
         <button onclick="resetWeek()" style="padding: 6px 10px; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Reset this week</button>
       </div>
-    </div>
+      </div>
+    </details>
   `;
   routineWeekly.innerHTML = weeklyHtml;
   
-  // Render history
+  // Render history - hidden by default, collapsible
   let historyHtml = `
     <details style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">History (last 7 days)</summary>
+      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">History (last 7 days) — expand</summary>
       <div style="margin-top: 8px;">
   `;
   
@@ -318,6 +323,7 @@ function renderRoutines() {
   routineHistory.innerHTML = historyHtml;
 }
 
+// Daily tasks now auto-complete, but keep this for manual override if needed
 window.toggleDailyTask = function(taskId) {
   const todayKey = getTodayKey();
   const state = loadRoutineState(todayKey);
@@ -343,15 +349,8 @@ window.pickAndShowCPD = function() {
   
   const { node, reasons } = result;
   
-  // Auto-select the node
+  // Auto-select the node (this will auto-complete tasks via showNode -> markStatusFieldsReviewed)
   showNode(node);
-  
-  // Mark D2 as complete
-  const todayKey = getTodayKey();
-  const state = loadRoutineState(todayKey);
-  state["D2"] = true;
-  saveRoutineState(todayKey, state);
-  renderRoutines();
   
   // Show reason
   if (reasons.length > 0) {
@@ -361,13 +360,7 @@ window.pickAndShowCPD = function() {
   }
 };
 
-window.confirmNoChange = function() {
-  const todayKey = getTodayKey();
-  const state = loadRoutineState(todayKey);
-  state["D3"] = true;
-  saveRoutineState(todayKey, state);
-  renderRoutines();
-};
+// Removed confirmNoChange - tasks now auto-complete when viewing CPDs
 
 window.resetToday = function() {
   if (confirm("Reset today's routine?")) {
@@ -557,10 +550,32 @@ function showNode(d) {
   panelContent.classList.remove("hidden");
   hideIntro();
 
-  if (d.type === "CPD") renderCPD(d);
+  if (d.type === "CPD") {
+    renderCPD(d);
+    // Auto-complete daily tasks when viewing a CPD
+    markStatusFieldsReviewed(d);
+  }
   if (d.type === "CCD") renderCCD(d);
   
   // Routines stay visible (already rendered at top)
+}
+
+function markStatusFieldsReviewed(node) {
+  if (node.type !== "CPD") return;
+  
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  const status = node.status || node.cpd?.status || {};
+  
+  // Mark each status field as reviewed when viewing the CPD
+  CPD_STATUS_FIELDS.forEach(field => {
+    if (status[field.key] !== undefined) {
+      state[`review_${field.key}`] = true;
+    }
+  });
+  
+  saveRoutineState(todayKey, state);
+  renderRoutines();
 }
 
 function renderCPD(node) {
@@ -601,7 +616,7 @@ function renderCPD(node) {
   const status = c.status || node.status || {};
   const cpdStatusFields = ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"];
   
-  panelContent.innerHTML += `
+panelContent.innerHTML += `
     <h3>8. Status — Product Maturity Signals</h3>
     <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
     ${renderStatusTable(status, cpdStatusFields)}
@@ -624,15 +639,15 @@ function humanize(key) {
     "standardizationRisk": "Standardization Risk"
   };
   return map[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, str => str.toUpperCase()).trim();
-}
-
-function statusClass(v) {
-  const s = String(v).toUpperCase();
-  if (s === "NONE") return "statusNone";
-  if (s === "TBD") return "statusTbd";
-  if (s.startsWith("N/A")) return "statusNa";
-  return "";
-}
+  }
+  
+  function statusClass(v) {
+    const s = String(v).toUpperCase();
+    if (s === "NONE") return "statusNone";
+    if (s === "TBD") return "statusTbd";
+    if (s.startsWith("N/A")) return "statusNa";
+    return "";
+  }
 
 function renderStatusTable(status, requiredFields) {
   const statusObj = status || {};
@@ -701,7 +716,7 @@ function validateSystem(data) {
       errors.push(`Fix link: references unknown node ${JSON.stringify(l)}`);
       continue;
     }
-    
+
     // A1: Allowed link types are ONLY: uses, inspired-by
     if (!RULES.allowedLinkTypes.has(l.type)) {
       errors.push(`Change link type from "${l.type}" to "uses" or "inspired-by" for ${s.name} → ${t.name}`);
@@ -716,7 +731,7 @@ function validateSystem(data) {
     if (s.type === "CPD" && t.type === "CPD" && l.type !== "uses") {
       errors.push(`Change link type to "uses" for ${s.name} → ${t.name}. CPDs can only have "uses" relationships with other CPDs.`);
     }
-    
+
     // A4: inspired-by MUST NOT be CPD→CPD
     if (l.type === "inspired-by" && s.type === "CPD" && t.type === "CPD") {
       errors.push(`Change link type from "inspired-by" to "uses" for ${s.name} → ${t.name}. CPDs cannot be inspired by other CPDs.`);
@@ -864,9 +879,9 @@ function showValidation(result) {
       panelErrors.classList.remove("hidden");
       panelErrors.innerHTML = `<div style="color: rgba(153, 255, 153, 0.8);">✅ No issues found.</div>`;
       renderRoutines();
-      return;
-    }
-    panelErrors.classList.remove("hidden");
+    return;
+  }
+  panelErrors.classList.remove("hidden");
     window.currentValidationErrors = errors;
     panelErrors.innerHTML = `<b>Validation Errors</b><ul>${errors.map((e, idx) => {
       const msgHash = hashString(e);
