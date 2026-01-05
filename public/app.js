@@ -37,23 +37,43 @@ const CCD_STATUS_FIELDS = [
   { key: "standardizationRisk", label: "Standardization Risk" }
 ];
 
-// Daily tasks - one per status field (CPD + CCD)
-const DAILY_TASKS = [
-  ...CPD_STATUS_FIELDS.map(field => ({
-    id: `review_cpd_${field.key}`,
-    fieldKey: field.key,
-    label: field.label,
-    nodeType: "CPD",
-    text: `Review: ${field.label}`
-  })),
-  ...CCD_STATUS_FIELDS.map(field => ({
-    id: `review_ccd_${field.key}`,
-    fieldKey: field.key,
-    label: field.label,
-    nodeType: "CCD",
-    text: `Review: ${field.label}`
-  }))
-];
+// Daily tasks are generated dynamically per node
+// This function creates tasks for all nodes in the data
+function generateDailyTasks(data) {
+  if (!data || !data.nodes) return [];
+  
+  const tasks = [];
+  
+  data.nodes.forEach(node => {
+    if (node.type === "CPD") {
+      CPD_STATUS_FIELDS.forEach(field => {
+        tasks.push({
+          id: `review_${node.id}_${field.key}`,
+          nodeId: node.id,
+          nodeName: node.name,
+          fieldKey: field.key,
+          label: field.label,
+          nodeType: "CPD",
+          text: `${node.name}: ${field.label}`
+        });
+      });
+    } else if (node.type === "CCD") {
+      CCD_STATUS_FIELDS.forEach(field => {
+        tasks.push({
+          id: `review_${node.id}_${field.key}`,
+          nodeId: node.id,
+          nodeName: node.name,
+          fieldKey: field.key,
+          label: field.label,
+          nodeType: "CCD",
+          text: `${node.name}: ${field.label}`
+        });
+      });
+    }
+  });
+  
+  return tasks;
+}
 
 const WEEKLY_TASKS = [
   { id: "W1", text: "Run Validate and review all Errors/Warnings." },
@@ -108,28 +128,34 @@ function getAcknowledgedErrors(weekKey) {
 }
 
 function calculateStreaks() {
+  if (!data || !data.nodes) return { dailyStreak: 0, weeklyStreak: 0 };
+  
   const today = new Date();
   let dailyStreak = 0;
   let weeklyStreak = 0;
   
-  // Calculate daily streak (consecutive days with at least 3 tasks completed)
+  // Generate tasks from current data structure
+  const tasks = generateDailyTasks(data);
+  const minTasksForStreak = Math.max(3, Math.floor(tasks.length * 0.2)); // At least 3, or 20% of total tasks
+  
+  // Calculate daily streak (consecutive days with at least minTasksForStreak tasks completed)
   for (let i = 0; i < 365; i++) {
     const checkDate = new Date(today);
     checkDate.setDate(checkDate.getDate() - i);
     const dateKey = checkDate.toISOString().split('T')[0];
     const state = loadRoutineState(dateKey);
-    const completed = DAILY_TASKS.filter(t => state[t.id]).length;
+    const completed = tasks.filter(t => state[t.id]).length;
     
     if (i === 0) {
-      // Today: count if at least 3 tasks done
-      if (completed >= 3) {
+      // Today: count if at least minTasksForStreak tasks done
+      if (completed >= minTasksForStreak) {
         dailyStreak = 1;
       } else {
         break;
       }
     } else {
-      // Past days: must have at least 3 tasks completed
-      if (completed >= 3) {
+      // Past days: must have at least minTasksForStreak tasks completed
+      if (completed >= minTasksForStreak) {
         dailyStreak++;
       } else {
         break;
@@ -216,13 +242,25 @@ function pickCPDForMe() {
 }
 
 function renderRoutines() {
+  if (!data || !data.nodes) {
+    routineDaily.innerHTML = '<div style="padding: 16px; color: var(--muted); font-size: 12px;">Loading...</div>';
+    return;
+  }
+  
   const todayKey = getTodayKey();
   const dailyState = loadRoutineState(todayKey);
   const streaks = calculateStreaks();
   
+  // Generate tasks dynamically from current nodes
+  const allTasks = generateDailyTasks(data);
+  
+  // Show only the 12 oldest tasks (most overdue)
+  const DAILY_TASKS = getOldestTasks(allTasks, 12);
+  
   const completed = DAILY_TASKS.filter(t => dailyState[t.id]).length;
   const total = DAILY_TASKS.length;
-  const percent = Math.round((completed / total) * 100);
+  const totalAllTasks = allTasks.length;
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
   
   // Clean, focused daily routine UI
   let dailyHtml = `
@@ -234,7 +272,7 @@ function renderRoutines() {
         </div>
         <div style="text-align: right;">
           <div style="font-size: 20px; font-weight: 700; color: rgba(102, 204, 255, 0.9);">${percent}%</div>
-          <div style="font-size: 10px; color: var(--muted);">${completed}/${total}</div>
+          <div style="font-size: 10px; color: var(--muted);">${completed}/${total}${totalAllTasks > total ? ` of ${totalAllTasks}` : ''}</div>
         </div>
       </div>
       
@@ -252,9 +290,8 @@ function renderRoutines() {
       : CCD_STATUS_FIELDS.find(f => f.key === task.fieldKey);
     // Use last word of label for short display
     const shortLabel = field ? field.label.split(' ').slice(-1)[0] : (task.label.split(' ').slice(-1)[0] || task.label);
-    // Show node name if task was completed, otherwise show generic label
-    const nodeName = checked ? (dailyState[`${task.id}_node`] || '') : '';
-    const displayLabel = nodeName ? `${nodeName}: ${shortLabel}` : shortLabel;
+    // Show node name and field
+    const displayLabel = `${task.nodeName}: ${shortLabel}`;
     
     dailyHtml += `
       <div style="padding: 10px; background: ${checked ? 'rgba(153, 255, 153, 0.15)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${checked ? 'rgba(153, 255, 153, 0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 8px; transition: all 0.2s;">
@@ -267,7 +304,7 @@ function renderRoutines() {
           </div>
         </div>
         <div style="font-size: 9px; color: var(--muted); margin-left: 28px;">
-          ${checked ? (nodeName ? `Reviewed: ${escapeHtml(nodeName)}` : 'Reviewed') : 'Pending'}
+          ${checked ? 'Reviewed' : 'Pending'}
         </div>
       </div>
     `;
@@ -578,21 +615,63 @@ window.openNodeDocument = function(node, fieldKey) {
   const altGithubUrl = `https://github.com/${owner}/${repo}/blob/master/${altDocPath}`;
   
   // Mark task as complete when user opens the document
-  markFieldTaskComplete(node.type, fieldKey, node.name);
+  markFieldTaskComplete(node.id, fieldKey);
   
   // Open primary URL (user can navigate if file doesn't exist)
   window.open(githubUrl, '_blank');
 };
 
-function markFieldTaskComplete(nodeType, fieldKey, nodeName) {
+function markFieldTaskComplete(nodeId, fieldKey) {
   const todayKey = getTodayKey();
   const state = loadRoutineState(todayKey);
-  const taskId = `review_${nodeType.toLowerCase()}_${fieldKey}`;
+  const taskId = `review_${nodeId}_${fieldKey}`;
   state[taskId] = true;
-  // Store which node was reviewed for this task
-  state[`${taskId}_node`] = nodeName;
+  // Store completion date for "oldest" calculation
+  state[`${taskId}_date`] = todayKey;
   saveRoutineState(todayKey, state);
+  
+  // Also store in a global completion history (for cross-day tracking)
+  const completionHistory = JSON.parse(localStorage.getItem('taskCompletionHistory') || '{}');
+  completionHistory[taskId] = todayKey;
+  localStorage.setItem('taskCompletionHistory', JSON.stringify(completionHistory));
+  
   renderRoutines();
+}
+
+function getTaskAge(taskId) {
+  // Get last completion date from history
+  const completionHistory = JSON.parse(localStorage.getItem('taskCompletionHistory') || '{}');
+  const lastCompleted = completionHistory[taskId];
+  
+  if (!lastCompleted) {
+    // Never completed = oldest possible (return very large number)
+    return Infinity;
+  }
+  
+  // Calculate days since last completion
+  const lastDate = new Date(lastCompleted);
+  const today = new Date();
+  const diffTime = today - lastDate;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  return diffDays;
+}
+
+function getOldestTasks(tasks, limit = 12) {
+  // Calculate age for each task
+  const tasksWithAge = tasks.map(task => ({
+    ...task,
+    age: getTaskAge(task.id)
+  }));
+  
+  // Sort by age (oldest first), then by node name for consistency
+  tasksWithAge.sort((a, b) => {
+    if (b.age !== a.age) return b.age - a.age; // Older first
+    return a.nodeName.localeCompare(b.nodeName); // Then alphabetically
+  });
+  
+  // Return top N oldest tasks
+  return tasksWithAge.slice(0, limit);
 }
 
 function renderCPD(node) {
