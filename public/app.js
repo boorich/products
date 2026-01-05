@@ -252,7 +252,9 @@ function renderRoutines() {
       : CCD_STATUS_FIELDS.find(f => f.key === task.fieldKey);
     // Use last word of label for short display
     const shortLabel = field ? field.label.split(' ').slice(-1)[0] : (task.label.split(' ').slice(-1)[0] || task.label);
-    const typePrefix = task.nodeType === "CPD" ? "CPD: " : "CCD: ";
+    // Show node name if task was completed, otherwise show generic label
+    const nodeName = checked ? (dailyState[`${task.id}_node`] || '') : '';
+    const displayLabel = nodeName ? `${nodeName}: ${shortLabel}` : shortLabel;
     
     dailyHtml += `
       <div style="padding: 10px; background: ${checked ? 'rgba(153, 255, 153, 0.15)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${checked ? 'rgba(153, 255, 153, 0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 8px; transition: all 0.2s;">
@@ -261,11 +263,11 @@ function renderRoutines() {
             ${checked ? '✓' : ''}
           </div>
           <div style="flex: 1; font-size: 11px; font-weight: 600; color: ${checked ? 'var(--muted)' : 'var(--text)'}; ${checked ? 'text-decoration: line-through;' : ''}">
-            ${escapeHtml(typePrefix + shortLabel)}
+            ${escapeHtml(displayLabel)}
           </div>
         </div>
         <div style="font-size: 9px; color: var(--muted); margin-left: 28px;">
-          ${checked ? 'Reviewed' : 'Pending'}
+          ${checked ? (nodeName ? `Reviewed: ${escapeHtml(nodeName)}` : 'Reviewed') : 'Pending'}
         </div>
       </div>
     `;
@@ -576,17 +578,19 @@ window.openNodeDocument = function(node, fieldKey) {
   const altGithubUrl = `https://github.com/${owner}/${repo}/blob/master/${altDocPath}`;
   
   // Mark task as complete when user opens the document
-  markFieldTaskComplete(node.type, fieldKey);
+  markFieldTaskComplete(node.type, fieldKey, node.name);
   
   // Open primary URL (user can navigate if file doesn't exist)
   window.open(githubUrl, '_blank');
 };
 
-function markFieldTaskComplete(nodeType, fieldKey) {
+function markFieldTaskComplete(nodeType, fieldKey, nodeName) {
   const todayKey = getTodayKey();
   const state = loadRoutineState(todayKey);
   const taskId = `review_${nodeType.toLowerCase()}_${fieldKey}`;
   state[taskId] = true;
+  // Store which node was reviewed for this task
+  state[`${taskId}_node`] = nodeName;
   saveRoutineState(todayKey, state);
   renderRoutines();
 }
