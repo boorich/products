@@ -223,7 +223,7 @@ function renderRoutines() {
   let dailyHtml = `
     <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
       <h3 style="margin-top: 0;">Daily Status Review</h3>
-      <p style="font-size: 11px; color: var(--muted); margin-bottom: 12px; margin-top: 4px;">Review CPDs to keep status fields in sync with product health. Tasks auto-complete when you view a CPD.</p>
+      <p style="font-size: 11px; color: var(--muted); margin-bottom: 12px; margin-top: 4px;">Review CPDs to keep status fields in sync with product health. Tasks complete automatically as you interact with status fields, run validation, or view CPDs.</p>
   `;
   
   DAILY_TASKS.forEach(task => {
@@ -453,7 +453,24 @@ function initGraph() {
   });
 
   document.getElementById("btnValidate").addEventListener("click", () => {
-    showValidation(validateSystem(data));
+    const result = validateSystem(data);
+    showValidation(result);
+    // Mark W1 as complete when validation is run
+    const weekKey = getWeekKey();
+    const state = loadRoutineState(weekKey);
+    state["W1"] = true;
+    saveRoutineState(weekKey, state);
+    
+    // Passive trigger: When validation runs, mark all status fields as reviewed
+    // (user is actively checking product health)
+    const todayKey = getTodayKey();
+    const dailyState = loadRoutineState(todayKey);
+    CPD_STATUS_FIELDS.forEach(field => {
+      dailyState[`review_${field.key}`] = true;
+    });
+    saveRoutineState(todayKey, dailyState);
+    
+    renderRoutines();
   });
 
   document.getElementById("btnCreateNew").addEventListener("click", () => {
@@ -560,6 +577,14 @@ function showNode(d) {
   // Routines stay visible (already rendered at top)
 }
 
+function markStatusFieldReviewed(fieldKey) {
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  state[`review_${fieldKey}`] = true;
+  saveRoutineState(todayKey, state);
+  renderRoutines();
+}
+
 function markStatusFieldsReviewed(node) {
   if (node.type !== "CPD") return;
   
@@ -617,10 +642,40 @@ function renderCPD(node) {
   const cpdStatusFields = ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"];
   
 panelContent.innerHTML += `
-    <h3>8. Status — Product Maturity Signals</h3>
+    <h3 id="status-section-header">8. Status — Product Maturity Signals</h3>
     <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
-    ${renderStatusTable(status, cpdStatusFields)}
+    ${renderStatusTable(status, cpdStatusFields, "CPD")}
   `;
+  
+  // Set up passive triggers: mark fields as reviewed when status section comes into view
+  setTimeout(() => {
+    setupStatusSectionObserver(node);
+  }, 100);
+}
+
+function setupStatusSectionObserver(node) {
+  if (node.type !== "CPD") return;
+  
+  const statusSection = document.querySelector('[data-status-section="true"]');
+  if (!statusSection) return;
+  
+  // Use Intersection Observer to detect when status section is viewed
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        // User has scrolled to status section - mark all visible fields as reviewed
+        const status = node.status || node.cpd?.status || {};
+        CPD_STATUS_FIELDS.forEach(field => {
+          if (status[field.key] !== undefined) {
+            markStatusFieldReviewed(field.key);
+          }
+        });
+        observer.disconnect(); // Only trigger once
+      }
+    });
+  }, { threshold: 0.3 }); // Trigger when 30% visible
+  
+  observer.observe(statusSection);
 }
 
 function humanize(key) {
@@ -649,15 +704,21 @@ function humanize(key) {
     return "";
   }
 
-function renderStatusTable(status, requiredFields) {
+function renderStatusTable(status, requiredFields, nodeType = "CPD") {
   const statusObj = status || {};
   const html = requiredFields.map(field => {
     const value = statusObj[field] ?? "NONE";
     const norm = String(value);
     const cls = statusClass(norm);
-    return `<div class="k">${escapeHtml(humanize(field))}</div><div class="v ${cls}">${escapeHtml(norm)}</div>`;
+    // Add data attribute and click handler for passive task completion
+    const fieldKey = field;
+    const taskId = nodeType === "CPD" ? `review_${fieldKey}` : null;
+    const clickHandler = taskId ? `onclick="markStatusFieldReviewed('${fieldKey}')"` : '';
+    const cursorStyle = taskId ? 'cursor: pointer;' : '';
+    const titleAttr = taskId ? `title="Click to mark '${humanize(fieldKey)}' as reviewed"` : '';
+    return `<div class="k">${escapeHtml(humanize(field))}</div><div class="v ${cls}" data-field="${fieldKey}" ${clickHandler} style="${cursorStyle}" ${titleAttr}>${escapeHtml(norm)}</div>`;
   }).join("");
-  return `<div class="kv">${html}</div>`;
+  return `<div class="kv" data-status-section="true">${html}</div>`;
 }
 
 function renderCCD(node) {
@@ -692,7 +753,7 @@ function renderCCD(node) {
 
     <h3>8. Status — Concept Maturity Signals</h3>
     <p class="statusExplanation">CCDs do not imply a product commitment. The status fields below indicate where this concept stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable. These values are signals of maturity, not failure.</p>
-    ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"])}
+    ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"], "CCD")}
   `;
 }
 
