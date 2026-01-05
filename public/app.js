@@ -198,129 +198,75 @@ function pickCPDForMe() {
 
 function renderRoutines() {
   const todayKey = getTodayKey();
-  const weekKey = getWeekKey();
   const dailyState = loadRoutineState(todayKey);
-  const weeklyState = loadRoutineState(weekKey);
-  const acks = getAcknowledgedErrors(weekKey);
   const streaks = calculateStreaks();
   
-  // Render streak banner
-  let streakHtml = `
-    <div style="margin-bottom: 16px; padding: 12px; background: rgba(102, 204, 255, 0.1); border: 1px solid rgba(102, 204, 255, 0.3); border-radius: 8px;">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">🔥 Streak</div>
-          <div style="font-size: 18px; font-weight: 700; color: var(--text);">
-            ${streaks.dailyStreak} day${streaks.dailyStreak !== 1 ? 's' : ''} • ${streaks.weeklyStreak} week${streaks.weeklyStreak !== 1 ? 's' : ''}
-          </div>
-        </div>
-        <div style="font-size: 24px;">🔥</div>
-      </div>
-    </div>
-  `;
+  const completed = DAILY_TASKS.filter(t => dailyState[t.id]).length;
+  const total = DAILY_TASKS.length;
+  const percent = Math.round((completed / total) * 100);
   
-  // Render daily - focused on status field maintenance
+  // Clean, focused daily routine UI
   let dailyHtml = `
-    <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <h3 style="margin-top: 0;">Daily Status Review</h3>
-      <p style="font-size: 11px; color: var(--muted); margin-bottom: 12px; margin-top: 4px;">Review CPDs to keep status fields in sync with product health. Tasks complete automatically as you interact with status fields, run validation, or view CPDs.</p>
+    <div style="margin-bottom: 20px; padding: 16px; background: linear-gradient(135deg, rgba(102, 204, 255, 0.12) 0%, rgba(102, 204, 255, 0.05) 100%); border: 1px solid rgba(102, 204, 255, 0.2); border-radius: 12px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div>
+          <div style="font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px;">Daily Status Review</div>
+          <div style="font-size: 11px; color: var(--muted);">Keep product health in sync</div>
+        </div>
+        <div style="text-align: right;">
+          <div style="font-size: 20px; font-weight: 700; color: rgba(102, 204, 255, 0.9);">${percent}%</div>
+          <div style="font-size: 10px; color: var(--muted);">${completed}/${total}</div>
+        </div>
+      </div>
+      
+      <div style="margin-bottom: 12px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+        <div style="height: 100%; width: ${percent}%; background: linear-gradient(90deg, rgba(102, 204, 255, 0.8) 0%, rgba(153, 255, 153, 0.8) 100%); border-radius: 3px; transition: width 0.3s ease;"></div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px;">
   `;
   
   DAILY_TASKS.forEach(task => {
     const checked = dailyState[task.id] || false;
-    const status = checked ? "✅" : "⭕";
+    const field = CPD_STATUS_FIELDS.find(f => f.key === task.fieldKey);
+    const shortLabel = field ? field.label.split(' ').slice(-1)[0] : task.label;
+    
     dailyHtml += `
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px; border-radius: 4px; ${checked ? 'background: rgba(153, 255, 153, 0.08);' : ''}">
-        <span style="font-size: 14px; width: 20px; text-align: center;">${status}</span>
-        <span style="flex: 1; font-size: 12px; ${checked ? 'color: var(--muted); text-decoration: line-through;' : 'color: var(--text);'}">
-          ${escapeHtml(task.text)}
-        </span>
+      <div style="padding: 10px; background: ${checked ? 'rgba(153, 255, 153, 0.15)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${checked ? 'rgba(153, 255, 153, 0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 8px; transition: all 0.2s;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+          <div style="width: 20px; height: 20px; border-radius: 4px; background: ${checked ? 'rgba(153, 255, 153, 0.3)' : 'rgba(255,255,255,0.1)'}; display: flex; align-items: center; justify-content: center; font-size: 12px;">
+            ${checked ? '✓' : ''}
+          </div>
+          <div style="flex: 1; font-size: 11px; font-weight: 600; color: ${checked ? 'var(--muted)' : 'var(--text)'}; ${checked ? 'text-decoration: line-through;' : ''}">
+            ${escapeHtml(shortLabel)}
+          </div>
+        </div>
+        <div style="font-size: 9px; color: var(--muted); margin-left: 28px;">
+          ${checked ? 'Reviewed' : 'Pending'}
+        </div>
       </div>
     `;
   });
   
   dailyHtml += `
-      <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line);">
-        <button onclick="pickAndShowCPD()" style="width: 100%; padding: 8px; background: rgba(102, 204, 255, 0.15); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600;">Pick a CPD to Review</button>
       </div>
+      
+      <div style="padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <button onclick="pickAndShowCPD()" style="width: 100%; padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.background='rgba(102, 204, 255, 0.3)'" onmouseout="this.style.background='rgba(102, 204, 255, 0.2)'">
+          🎯 Review a CPD
+        </button>
+      </div>
+      
+      ${streaks.dailyStreak > 0 ? `
+      <div style="margin-top: 12px; padding: 8px; background: rgba(255, 204, 102, 0.1); border: 1px solid rgba(255, 204, 102, 0.3); border-radius: 6px; text-align: center;">
+        <div style="font-size: 11px; color: var(--muted);">🔥 Streak</div>
+        <div style="font-size: 16px; font-weight: 700; color: rgba(255, 204, 102, 0.9);">${streaks.dailyStreak} day${streaks.dailyStreak !== 1 ? 's' : ''}</div>
+      </div>
+      ` : ''}
     </div>
   `;
   
-  // Render weekly - hidden by default, collapsible
-  const showW5 = isWithin14DaysBeforeVacation();
-  const weeklyTasksToShow = showW5 ? WEEKLY_TASKS : WEEKLY_TASKS.slice(0, 4);
-  
-  let weeklyHtml = `
-    <details style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">Routine — This Week (expand)</summary>
-      <div style="margin-top: 12px;">
-  `;
-  
-  weeklyTasksToShow.forEach(task => {
-    let checked = weeklyState[task.id] || false;
-    
-    // Special logic for W2: check if all errors are acknowledged
-    if (task.id === "W2") {
-      const validation = validateSystem(data);
-      const errors = validation.errors || [];
-      if (errors.length > 0) {
-        const allAcknowledged = errors.every(err => {
-          const msgHash = hashString(err);
-          return acks[msgHash];
-        });
-        checked = allAcknowledged;
-      }
-    }
-    
-    weeklyHtml += `
-      <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
-        <input type="checkbox" id="weekly-${task.id}" ${checked ? 'checked' : ''} 
-               onchange="toggleWeeklyTask('${task.id}')"
-               style="margin-top: 2px; cursor: pointer;" />
-        <label for="weekly-${task.id}" style="flex: 1; font-size: 12px; line-height: 1.4; cursor: pointer;">
-          ${escapeHtml(task.text)}
-        </label>
-      </div>
-    `;
-  });
-  
-  weeklyHtml += `
-      <div style="margin-top: 12px; display: flex; gap: 8px;">
-        <button onclick="resetWeek()" style="padding: 6px 10px; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Reset this week</button>
-      </div>
-      </div>
-    </details>
-  `;
-  routineWeekly.innerHTML = weeklyHtml;
-  
-  // Render history - hidden by default, collapsible
-  let historyHtml = `
-    <details style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
-      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">History (last 7 days) — expand</summary>
-      <div style="margin-top: 8px;">
-  `;
-  
-  for (let i = 0; i < 7; i++) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dateKey = date.toISOString().split('T')[0];
-    const state = loadRoutineState(dateKey);
-    const completed = DAILY_TASKS.filter(t => state[t.id]).length;
-    const percent = Math.round((completed / DAILY_TASKS.length) * 100);
-    const dateStr = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    
-    historyHtml += `
-      <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">
-        ${dateStr}: ${percent}% (${completed}/${DAILY_TASKS.length})
-      </div>
-    `;
-  }
-  
-  historyHtml += `
-      </div>
-    </details>
-  `;
-  routineHistory.innerHTML = historyHtml;
+  routineDaily.innerHTML = dailyHtml;
 }
 
 // Daily tasks now auto-complete, but keep this for manual override if needed
