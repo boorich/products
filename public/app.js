@@ -252,8 +252,11 @@ function renderRoutines() {
       </div>
       
       <div style="padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
-        <button onclick="pickAndShowCPD()" style="width: 100%; padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.background='rgba(102, 204, 255, 0.3)'" onmouseout="this.style.background='rgba(102, 204, 255, 0.2)'">
+        <button onclick="pickAndShowCPD()" style="width: 100%; padding: 10px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; margin-bottom: 8px;" onmouseover="this.style.background='rgba(102, 204, 255, 0.3)'" onmouseout="this.style.background='rgba(102, 204, 255, 0.2)'">
           🎯 Review a CPD
+        </button>
+        <button onclick="resetToday()" style="width: 100%; padding: 6px; background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 10px; transition: all 0.2s;" onmouseover="this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
+          Reset today
         </button>
       </div>
       
