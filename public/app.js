@@ -3,13 +3,311 @@ const height = () => document.getElementById("graph").clientHeight || (window.in
 
 const panelContent = document.getElementById("panelContent");
 const panelErrors = document.getElementById("panelErrors");
+const routineDaily = document.getElementById("routineDaily");
+const routineWeekly = document.getElementById("routineWeekly");
+const routineHistory = document.getElementById("routineHistory");
 
 let svg, simulation, data, nodeSel, linkSel;
+
+// Vacation config
+const VACATION_START = "2026-02-01";
 
 const RULES = {
   // NICPD: no implicit mutual definition / no hard depends-on edges between CPDs
   forbidDependsOnBetweenCPD: true,
   allowedLinkTypes: new Set(["uses", "inspired-by"])
+};
+
+// Routine system
+const DAILY_TASKS = [
+  { id: "D1", text: "Open the dashboard (this page) and do not start coding." },
+  { id: "D2", text: "Review exactly 1 CPD node: click it and scan all 6 status fields." },
+  { id: "D3", text: "If any status is wrong, update the CPD text/status (ONLY documentation). Otherwise explicitly confirm 'No change'." },
+  { id: "D4", text: "Check for NICPD drift: ensure no CPD→CPD link exists except 'uses' (optional)." },
+  { id: "D5", text: "Stop. Close the dashboard." }
+];
+
+const WEEKLY_TASKS = [
+  { id: "W1", text: "Run Validate and review all Errors/Warnings." },
+  { id: "W2", text: "Resolve all ERRORS this week (or mark as acknowledged with a reason)." },
+  { id: "W3", text: "Pick 1 CPD and answer: 'What decision did this product enable this week?' (write 1 sentence in CPD)." },
+  { id: "W4", text: "Review CCDs for misuse: no product language, no implied commitments." },
+  { id: "W5", text: "Pre-vacation hardening check (if within 14 days before a configured vacation date): ensure every CPD has OperationalOwnership ≠ NONE." }
+];
+
+function getTodayKey() {
+  const now = new Date();
+  return now.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+function getWeekKey() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+  const monday = new Date(now.setDate(diff));
+  return monday.toISOString().split('T')[0]; // YYYY-MM-DD of Monday
+}
+
+function isWithin14DaysBeforeVacation() {
+  const vacation = new Date(VACATION_START);
+  const today = new Date();
+  const diffDays = Math.ceil((vacation - today) / (1000 * 60 * 60 * 24));
+  return diffDays >= 0 && diffDays <= 14;
+}
+
+function loadRoutineState(key) {
+  const stored = localStorage.getItem(`routine_${key}`);
+  return stored ? JSON.parse(stored) : {};
+}
+
+function saveRoutineState(key, state) {
+  localStorage.setItem(`routine_${key}`, JSON.stringify(state));
+}
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(36);
+}
+
+function getAcknowledgedErrors(weekKey) {
+  const stored = localStorage.getItem(`ack_${weekKey}`);
+  return stored ? JSON.parse(stored) : {};
+}
+
+function acknowledgeError(message, reason, weekKey) {
+  const acks = getAcknowledgedErrors(weekKey);
+  const msgHash = hashString(message);
+  acks[msgHash] = { message, reason, timestamp: Date.now() };
+  localStorage.setItem(`ack_${weekKey}`, JSON.stringify(acks));
+}
+
+function pickCPDForMe() {
+  if (!data || !data.nodes) return null;
+  
+  const cpds = data.nodes.filter(n => n.type === "CPD");
+  if (cpds.length === 0) return null;
+  
+  const scored = cpds.map(node => {
+    let score = 0;
+    const status = node.status || node.cpd?.status || {};
+    const reasons = [];
+    
+    // Score by status values
+    for (const [key, value] of Object.entries(status)) {
+      const val = String(value).toUpperCase();
+      if (val === "TBD") {
+        score += 3;
+        reasons.push(`${key}=TBD`);
+      } else if (val === "NONE") {
+        score += 2;
+        reasons.push(`${key}=NONE`);
+      }
+    }
+    
+    // Score by lifecycle
+    const lifecycle = node.cpd?.lifecycle || "";
+    if (lifecycle.includes("Growth") || lifecycle.includes("Incubation")) {
+      score += 1;
+    }
+    
+    return { node, score, reasons: reasons.slice(0, 3) };
+  });
+  
+  // Sort by score (desc), then by id (asc)
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.node.id.localeCompare(b.node.id);
+  });
+  
+  return scored[0];
+}
+
+function renderRoutines() {
+  const todayKey = getTodayKey();
+  const weekKey = getWeekKey();
+  const dailyState = loadRoutineState(todayKey);
+  const weeklyState = loadRoutineState(weekKey);
+  const acks = getAcknowledgedErrors(weekKey);
+  
+  // Render daily
+  let dailyHtml = `
+    <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
+      <h3 style="margin-top: 0;">Routine — Today</h3>
+  `;
+  
+  DAILY_TASKS.forEach(task => {
+    const checked = dailyState[task.id] || false;
+    dailyHtml += `
+      <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
+        <input type="checkbox" id="daily-${task.id}" ${checked ? 'checked' : ''} 
+               onchange="toggleDailyTask('${task.id}')"
+               style="margin-top: 2px; cursor: pointer;" />
+        <label for="daily-${task.id}" style="flex: 1; font-size: 12px; line-height: 1.4; cursor: pointer;">
+          ${task.id === "D2" ? `
+            ${task.text}
+            <button onclick="pickAndShowCPD()" style="margin-left: 8px; padding: 4px 8px; background: rgba(102, 204, 255, 0.2); border: 1px solid rgba(102, 204, 255, 0.4); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Pick a CPD for me</button>
+          ` : task.id === "D3" ? `
+            ${task.text}
+            <button onclick="confirmNoChange()" style="margin-left: 8px; padding: 4px 8px; background: rgba(153, 255, 153, 0.2); border: 1px solid rgba(153, 255, 153, 0.4); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Confirm No Change</button>
+          ` : escapeHtml(task.text)}
+        </label>
+      </div>
+    `;
+  });
+  
+  dailyHtml += `
+      <div style="margin-top: 12px; display: flex; gap: 8px;">
+        <button onclick="resetToday()" style="padding: 6px 10px; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Reset today</button>
+      </div>
+    </div>
+  `;
+  routineDaily.innerHTML = dailyHtml;
+  
+  // Render weekly
+  const showW5 = isWithin14DaysBeforeVacation();
+  const weeklyTasksToShow = showW5 ? WEEKLY_TASKS : WEEKLY_TASKS.slice(0, 4);
+  
+  let weeklyHtml = `
+    <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
+      <h3 style="margin-top: 0;">Routine — This Week</h3>
+  `;
+  
+  weeklyTasksToShow.forEach(task => {
+    let checked = weeklyState[task.id] || false;
+    
+    // Special logic for W2: check if all errors are acknowledged
+    if (task.id === "W2") {
+      const validation = validateSystem(data);
+      const errors = validation.errors || [];
+      if (errors.length > 0) {
+        const allAcknowledged = errors.every(err => {
+          const msgHash = hashString(err);
+          return acks[msgHash];
+        });
+        checked = allAcknowledged;
+      }
+    }
+    
+    weeklyHtml += `
+      <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
+        <input type="checkbox" id="weekly-${task.id}" ${checked ? 'checked' : ''} 
+               onchange="toggleWeeklyTask('${task.id}')"
+               style="margin-top: 2px; cursor: pointer;" />
+        <label for="weekly-${task.id}" style="flex: 1; font-size: 12px; line-height: 1.4; cursor: pointer;">
+          ${escapeHtml(task.text)}
+        </label>
+      </div>
+    `;
+  });
+  
+  weeklyHtml += `
+      <div style="margin-top: 12px; display: flex; gap: 8px;">
+        <button onclick="resetWeek()" style="padding: 6px 10px; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--text); cursor: pointer; font-size: 11px;">Reset this week</button>
+      </div>
+    </div>
+  `;
+  routineWeekly.innerHTML = weeklyHtml;
+  
+  // Render history
+  let historyHtml = `
+    <details style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line);">
+      <summary style="cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 8px;">History (last 7 days)</summary>
+      <div style="margin-top: 8px;">
+  `;
+  
+  for (let i = 0; i < 7; i++) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateKey = date.toISOString().split('T')[0];
+    const state = loadRoutineState(dateKey);
+    const completed = DAILY_TASKS.filter(t => state[t.id]).length;
+    const percent = Math.round((completed / DAILY_TASKS.length) * 100);
+    const dateStr = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    
+    historyHtml += `
+      <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">
+        ${dateStr}: ${percent}% (${completed}/${DAILY_TASKS.length})
+      </div>
+    `;
+  }
+  
+  historyHtml += `
+      </div>
+    </details>
+  `;
+  routineHistory.innerHTML = historyHtml;
+}
+
+window.toggleDailyTask = function(taskId) {
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  state[taskId] = !state[taskId];
+  saveRoutineState(todayKey, state);
+  renderRoutines();
+};
+
+window.toggleWeeklyTask = function(taskId) {
+  const weekKey = getWeekKey();
+  const state = loadRoutineState(weekKey);
+  state[taskId] = !state[taskId];
+  saveRoutineState(weekKey, state);
+  renderRoutines();
+};
+
+window.pickAndShowCPD = function() {
+  const result = pickCPDForMe();
+  if (!result) {
+    alert("No CPD nodes found.");
+    return;
+  }
+  
+  const { node, reasons } = result;
+  
+  // Auto-select the node
+  showNode(node);
+  
+  // Mark D2 as complete
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  state["D2"] = true;
+  saveRoutineState(todayKey, state);
+  renderRoutines();
+  
+  // Show reason
+  if (reasons.length > 0) {
+    setTimeout(() => {
+      alert(`Selected because: ${reasons.join(", ")}`);
+    }, 100);
+  }
+};
+
+window.confirmNoChange = function() {
+  const todayKey = getTodayKey();
+  const state = loadRoutineState(todayKey);
+  state["D3"] = true;
+  saveRoutineState(todayKey, state);
+  renderRoutines();
+};
+
+window.resetToday = function() {
+  if (confirm("Reset today's routine?")) {
+    const todayKey = getTodayKey();
+    localStorage.removeItem(`routine_${todayKey}`);
+    renderRoutines();
+  }
+};
+
+window.resetWeek = function() {
+  if (confirm("Reset this week's routine?")) {
+    const weekKey = getWeekKey();
+    localStorage.removeItem(`routine_${weekKey}`);
+    renderRoutines();
+  }
 };
 
 function load() {
@@ -20,6 +318,26 @@ function load() {
       initGraph();
       render();
       showIntro();
+      // Auto-reset check
+      const lastDailyKey = localStorage.getItem('lastDailyKey');
+      const todayKey = getTodayKey();
+      if (lastDailyKey && lastDailyKey !== todayKey) {
+        // New day - daily routines auto-reset (state cleared)
+        localStorage.setItem('lastDailyKey', todayKey);
+      } else if (!lastDailyKey) {
+        localStorage.setItem('lastDailyKey', todayKey);
+      }
+      
+      const lastWeekKey = localStorage.getItem('lastWeekKey');
+      const weekKey = getWeekKey();
+      if (lastWeekKey && lastWeekKey !== weekKey) {
+        // New week - weekly routines auto-reset (state cleared)
+        localStorage.setItem('lastWeekKey', weekKey);
+      } else if (!lastWeekKey) {
+        localStorage.setItem('lastWeekKey', weekKey);
+      }
+      
+      renderRoutines();
     });
 }
 
@@ -166,6 +484,8 @@ function showNode(d) {
 
   if (d.type === "CPD") renderCPD(d);
   if (d.type === "CCD") renderCCD(d);
+  
+  // Routines stay visible (already rendered at top)
 }
 
 function renderCPD(node) {
@@ -459,6 +779,8 @@ function hideIntro() {
 
 function showValidation(result) {
   hideIntro();
+  const weekKey = getWeekKey();
+  const acks = getAcknowledgedErrors(weekKey);
   
   // Handle legacy format (array of errors)
   if (Array.isArray(result)) {
@@ -466,10 +788,17 @@ function showValidation(result) {
     if (!errors || errors.length === 0) {
       panelErrors.classList.remove("hidden");
       panelErrors.innerHTML = `<div style="color: rgba(153, 255, 153, 0.8);">✅ No issues found.</div>`;
+      renderRoutines();
       return;
     }
     panelErrors.classList.remove("hidden");
-    panelErrors.innerHTML = `<b>Validation Errors</b><ul>${errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
+    window.currentValidationErrors = errors;
+    panelErrors.innerHTML = `<b>Validation Errors</b><ul>${errors.map((e, idx) => {
+      const msgHash = hashString(e);
+      const ack = acks[msgHash];
+      return `<li>${ack ? `<span style="color: var(--muted);">[ACK: ${escapeHtml(ack.reason || 'acknowledged')}]</span> ` : ''}${escapeHtml(e)}${!ack ? ` <button onclick="acknowledgeValidationMessage(${idx}, '${weekKey}')" style="margin-left: 6px; padding: 2px 6px; background: transparent; border: 1px solid var(--line); border-radius: 3px; color: var(--text); cursor: pointer; font-size: 10px;">Acknowledge</button>` : ''}</li>`;
+    }).join("")}</ul>`;
+    renderRoutines();
     return;
   }
   
@@ -479,6 +808,7 @@ function showValidation(result) {
   if (errors.length === 0 && warnings.length === 0) {
     panelErrors.classList.remove("hidden");
     panelErrors.innerHTML = `<div style="color: rgba(153, 255, 153, 0.8);">✅ No issues found.</div>`;
+    renderRoutines();
     return;
   }
   
@@ -486,7 +816,14 @@ function showValidation(result) {
   let html = `<b>Validation Results</b>`;
   
   if (errors.length > 0) {
-    html += `<div style="margin-top: 8px;"><b>Errors (${errors.length})</b><ul style="margin-top: 4px;">${errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`;
+    html += `<div style="margin-top: 8px;"><b>Errors (${errors.length})</b><ul style="margin-top: 4px;">${errors.map((e, idx) => {
+      const msgHash = hashString(e);
+      const ack = acks[msgHash];
+      const safeMsg = e.replace(/'/g, "&#039;").replace(/"/g, "&quot;");
+      return `<li>${ack ? `<span style="color: var(--muted);">[ACK: ${escapeHtml(ack.reason || 'acknowledged')}]</span> ` : ''}${escapeHtml(e)}${!ack ? ` <button onclick="acknowledgeValidationMessage(${idx}, '${weekKey}')" data-message="${escapeHtml(safeMsg)}" style="margin-left: 6px; padding: 2px 6px; background: transparent; border: 1px solid var(--line); border-radius: 3px; color: var(--text); cursor: pointer; font-size: 10px;">Acknowledge</button>` : ''}</li>`;
+    }).join("")}</ul></div>`;
+    // Store errors for acknowledgement
+    window.currentValidationErrors = errors;
   }
   
   if (warnings.length > 0) {
@@ -494,7 +831,23 @@ function showValidation(result) {
   }
   
   panelErrors.innerHTML = html;
+  renderRoutines();
 }
+
+window.acknowledgeValidationMessage = function(errorIdx, weekKey) {
+  if (!window.currentValidationErrors || !window.currentValidationErrors[errorIdx]) return;
+  const message = window.currentValidationErrors[errorIdx];
+  const reason = prompt("Reason for acknowledgement (optional, max 120 chars):", "");
+  if (reason === null) return; // User cancelled
+  
+  const trimmedReason = reason.trim().substring(0, 120);
+  acknowledgeError(message, trimmedReason, weekKey);
+  
+  // Re-run validation to update display
+  if (data) {
+    showValidation(validateSystem(data));
+  }
+};
 
 function drag(sim) {
   function dragstarted(event, d) {

@@ -59,6 +59,10 @@
     overflow: auto;
   }
   
+  #routineDaily, #routineWeekly, #routineHistory {
+    margin-bottom: 12px;
+  }
+  
   .panelEmpty .hint { font-weight: 700; margin-bottom: 6px; }
   .panelEmpty .mini { color: var(--muted); font-size: 13px; }
   
