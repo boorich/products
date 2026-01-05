@@ -1099,7 +1099,7 @@ window.setupGitHubAuth = function() {
                style="width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 13px;" />
         <p style="font-size: 11px; color: var(--muted); margin-top: 4px;">
           Create one at: <a href="https://github.com/settings/tokens" target="_blank" style="color: rgba(102, 204, 255, 0.8);">github.com/settings/tokens</a><br>
-          Required scope: <code>repo</code> (Full control of private repositories)
+          Required scope: <code>Contents</code> (Read and write)
         </p>
       </div>
       <div style="display: flex; gap: 8px;">
@@ -1194,7 +1194,9 @@ window.commitToGitHub = async function() {
     }
     
     const fileData = await getFileResponse.json();
-    const currentContent = JSON.parse(atob(fileData.content.replace(/\s/g, '')));
+    // GitHub API returns base64 with possible newlines - remove them before decoding
+    const decodedContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
+    const currentContent = JSON.parse(decodedContent);
     
     // Step 2: Add new node to the data
     currentContent.nodes.push(node);
