@@ -580,8 +580,9 @@ function showNode(d) {
   // Routines stay visible (already rendered at top)
 }
 
-window.openNodeDocument = function(node, fieldKey) {
+window.openNodeDocument = async function(node, fieldKey) {
   const repoInfo = getGitHubRepoInfo();
+  const token = localStorage.getItem('githubToken');
   let owner, repo;
   
   if (repoInfo && repoInfo.owner && repoInfo.repo) {
@@ -596,28 +597,97 @@ window.openNodeDocument = function(node, fieldKey) {
       const pathParts = window.location.pathname.split('/').filter(p => p);
       repo = pathParts[0] || 'capability-system';
     } else {
-      alert("GitHub repository info not configured. Please set it up in the Create New flow, or manually open the document in GitHub.");
+      alert("GitHub repository info not configured. Please set it up in the Create New flow.");
       return;
     }
   }
   
-  // Construct GitHub file URL - documents are stored in docs/ directory
-  // Try both possible paths (with and without subdirectories)
+  if (!token) {
+    alert("GitHub token not configured. Please set it up in the Create New flow.");
+    return;
+  }
+  
+  // Construct document path
   const docPath = node.type === "CPD" 
     ? `docs/cpds/${node.id}.md`
     : `docs/ccds/${node.id}.md`;
   
-  // Also try alternative path (directly in docs/)
-  const altDocPath = `docs/${node.id}.md`;
-  
-  // Try primary path first, fallback to alternative
   const githubUrl = `https://github.com/${owner}/${repo}/blob/master/${docPath}`;
-  const altGithubUrl = `https://github.com/${owner}/${repo}/blob/master/${altDocPath}`;
+  
+  // Check if file exists, create if it doesn't
+  try {
+    const checkResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!checkResponse.ok && checkResponse.status === 404) {
+      // File doesn't exist - create it
+      const defaultContent = `# ${node.name} (${node.type})
+
+## Status Field: ${humanize(fieldKey)}
+
+${node.type === "CPD" ? "## Product Maturity Signals" : "## Concept Maturity Signals"}
+
+### ${humanize(fieldKey)}
+
+Current status: ${(node.status && node.status[fieldKey]) || "NONE"}
+
+---
+
+*This document tracks the ${humanize(fieldKey)} status for ${node.name}.*
+
+*Last updated: ${new Date().toISOString().split('T')[0]}*
+`;
+      
+      // Detect default branch
+      let branch = 'main';
+      try {
+        const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (repoResponse.ok) {
+          const repoInfo = await repoResponse.json();
+          branch = repoInfo.default_branch || 'main';
+        }
+      } catch (e) {
+        // Fallback to 'main'
+      }
+      
+      const createResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: `Create ${node.type} document: ${node.name}`,
+          content: btoa(unescape(encodeURIComponent(defaultContent))),
+          branch: branch
+        })
+      });
+      
+      if (!createResponse.ok) {
+        const error = await createResponse.json();
+        console.error('Failed to create document:', error);
+        // Still open the URL - user can create manually
+      }
+    }
+  } catch (error) {
+    console.error('Error checking/creating document:', error);
+    // Continue to open URL anyway
+  }
   
   // Mark task as complete when user opens the document
   markFieldTaskComplete(node.id, fieldKey);
   
-  // Open primary URL (user can navigate if file doesn't exist)
+  // Open the document
   window.open(githubUrl, '_blank');
 };
 
@@ -1780,9 +1850,56 @@ window.deleteNode = async function(node) {
     return;
   }
   
-  // Confirmation
-  const confirmed = confirm(`Are you sure you want to delete "${node.name}" (${node.type})?\n\nThis will:\n- Remove the node from the graph\n- Remove all links connected to this node\n- Update data.json in GitHub\n\nThis action cannot be undone.`);
-  if (!confirmed) return;
+  // Proper warning dialog
+  const warningHtml = `
+    <div style="padding: 20px; max-width: 500px;">
+      <h2 style="margin-top: 0; color: var(--bad);">⚠️ Delete Node</h2>
+      <p style="margin-bottom: 16px; font-size: 14px;">
+        You are about to delete <strong>${escapeHtml(node.name)}</strong> (${node.type}).
+      </p>
+      <div style="background: rgba(255, 102, 122, 0.1); border-left: 3px solid var(--bad); padding: 12px; margin-bottom: 16px; border-radius: 4px;">
+        <p style="margin: 0; font-size: 12px; color: var(--muted);">
+          <strong>This will permanently:</strong><br>
+          • Remove the node from the graph<br>
+          • Remove all links connected to this node<br>
+          • Delete the markdown document (${node.type === "CPD" ? `docs/cpds/${node.id}.md` : `docs/ccds/${node.id}.md`})<br>
+          • Update data.json in GitHub
+        </p>
+      </div>
+      <p style="font-size: 12px; color: var(--muted); margin-bottom: 20px;">
+        <strong>Note:</strong> This action can be undone via Git history, but requires manual recovery.
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="deleteCancel" style="padding: 10px 20px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--text); cursor: pointer;">Cancel</button>
+        <button id="deleteConfirm" style="padding: 10px 20px; background: rgba(255, 102, 122, 0.2); border: 1px solid var(--bad); border-radius: 6px; color: var(--bad); cursor: pointer; font-weight: 600;">Delete Permanently</button>
+      </div>
+    </div>
+  `;
+  
+  // Show warning in panel
+  panelContent.classList.remove("hidden");
+  panelContent.innerHTML = warningHtml;
+  
+  // Wait for user confirmation
+  const confirmed = await new Promise((resolve) => {
+    document.getElementById("deleteConfirm").addEventListener("click", () => {
+      resolve(true);
+    });
+    document.getElementById("deleteCancel").addEventListener("click", () => {
+      resolve(false);
+    });
+  });
+  
+  if (!confirmed) {
+    // User cancelled - restore previous view
+    if (window.currentNode) {
+      showNode(window.currentNode);
+    } else {
+      panelContent.classList.add("hidden");
+      document.querySelector(".panelEmpty")?.classList?.remove("hidden");
+    }
+    return;
+  }
   
   const token = localStorage.getItem('githubToken');
   const repoStr = localStorage.getItem('githubRepo');
@@ -1858,6 +1975,42 @@ window.deleteNode = async function(node) {
         // Fallback to 'main'
       }
       
+      // Delete markdown file first
+      const docPath = node.type === "CPD" 
+        ? `docs/cpds/${node.id}.md`
+        : `docs/ccds/${node.id}.md`;
+      
+      try {
+        // Check if file exists and get its SHA
+        const docCheckResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        if (docCheckResponse.ok) {
+          const docFileData = await docCheckResponse.json();
+          // Delete the markdown file
+          await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: `Delete ${node.type} document: ${node.name}`,
+              sha: docFileData.sha,
+              branch: branch
+            })
+          });
+        }
+      } catch (error) {
+        console.warn('Failed to delete markdown file (may not exist):', error);
+        // Continue with node deletion even if markdown deletion fails
+      }
+      
       // Use retry helper to always work with latest file
       const commitResult = await commitWithRetry(
         owner,
@@ -1884,7 +2037,7 @@ window.deleteNode = async function(node) {
         <strong>✅ Node deleted successfully!</strong><br>
         <span style="font-size: 11px; color: var(--muted);">
           Commit: <a href="${commitResult.commit.html_url}" target="_blank" style="color: rgba(102, 204, 255, 0.8);">${commitResult.commit.sha.substring(0, 7)}</a><br>
-          The graph will update after the site rebuilds (usually within a minute).
+          The graph has been updated instantly.
         </span>
       </div>
     `;
@@ -1951,6 +2104,74 @@ window.commitToGitHub = async function() {
       }
     } catch (e) {
       // Fallback to 'main'
+    }
+    
+    // Create markdown file first
+    const docPath = node.type === "CPD" 
+      ? `docs/cpds/${node.id}.md`
+      : `docs/ccds/${node.id}.md`;
+    
+    // Create initial markdown document
+    const markdownContent = `# ${node.name} (${node.type})
+
+${node.type === "CPD" ? "## Product Maturity Signals" : "## Concept Maturity Signals"}
+
+This document tracks the maturity status fields for ${node.name}.
+
+${node.type === "CPD" ? `
+### Status Fields
+
+- **Customer Research Data**: ${(node.status && node.status.customerResearchData) || "NONE"}
+- **Value Proposition Clarity**: ${(node.status && node.status.valuePropositionClarity) || "NONE"}
+- **Pricing / Economic Model**: ${(node.status && node.status.pricingEconomicModel) || "NONE"}
+- **Reliability SLO**: ${(node.status && node.status.reliabilitySLO) || "NONE"}
+- **Security Risk Posture**: ${(node.status && node.status.securityRiskPosture) || "NONE"}
+- **Operational Ownership**: ${(node.status && node.status.operationalOwnership) || "NONE"}
+` : `
+### Status Fields
+
+- **User Audience Evidence**: ${(node.status && node.status.userAudienceEvidence) || "NONE"}
+- **Problem Definition Clarity**: ${(node.status && node.status.problemDefinitionClarity) || "NONE"}
+- **Adoption Evidence**: ${(node.status && node.status.adoptionEvidence) || "NONE"}
+- **Productization Eligibility**: ${(node.status && node.status.productizationEligibility) || "NONE"}
+- **Ownership Status**: ${(node.status && node.status.ownershipStatus) || "NONE"}
+- **Standardization Risk**: ${(node.status && node.status.standardizationRisk) || "NONE"}
+`}
+
+---
+
+*Created: ${new Date().toISOString().split('T')[0]}*
+*Last updated: ${new Date().toISOString().split('T')[0]}*
+`;
+    
+    try {
+      // Check if file already exists
+      const docCheckResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      
+      if (!docCheckResponse.ok || docCheckResponse.status === 404) {
+        // File doesn't exist - create it
+        await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: `Create ${node.type} document: ${node.name}`,
+            content: btoa(unescape(encodeURIComponent(markdownContent))),
+            branch: branch
+          })
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to create markdown file:', error);
+      // Continue with node creation even if markdown creation fails
     }
     
     // Use retry helper to always work with latest file
