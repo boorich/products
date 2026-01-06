@@ -10,7 +10,7 @@ Current status: WIP
 
 ### Value Proposition Clarity
 
-Current status: NONE
+Current status: WIP
 
 ---
 
