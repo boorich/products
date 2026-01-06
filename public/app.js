@@ -883,16 +883,21 @@ async function saveMarkdownDocument() {
     // Try to parse status updates from markdown and update node
     parseAndUpdateNodeStatus(node, content);
     
-    // Update the node in the data array
+    // Update the node in the data array - make sure we use the updated node with parsed status
     const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
     if (nodeIndex !== -1) {
-      data.nodes[nodeIndex] = { ...node };
+      // Merge the parsed status into the existing node
+      data.nodes[nodeIndex].status = { ...node.status };
+      // Update the reference
       window.currentNode = data.nodes[nodeIndex];
     }
     
-    // Refresh the node view
+    // Force refresh the node view to show updated status
     if (window.currentNode && window.currentNode.id === node.id) {
-      showNode(window.currentNode);
+      // Small delay to ensure DOM updates
+      setTimeout(() => {
+        showNode(window.currentNode);
+      }, 100);
     }
     
   } catch (error) {
@@ -911,25 +916,46 @@ function parseAndUpdateNodeStatus(node, markdown) {
   
   if (!node.status) node.status = {};
   
+  const lines = markdown.split('\n');
+  let foundCount = 0;
+  
   statusFields.forEach(field => {
     const fieldName = humanize(field);
-    // Look for pattern: ### Field Name\n\nCurrent status: VALUE
-    // The field name might be in a header, then we look for "Current status:" on the next lines
-    const lines = markdown.split('\n');
+    let found = false;
     
+    // Look for pattern: ### Field Name followed by "Current status: VALUE"
     for (let i = 0; i < lines.length; i++) {
       // Check if this line is a header with the field name
-      if (lines[i].match(/^###\s+(.+)$/)) {
-        const headerText = lines[i].replace(/^###\s+/, '').trim();
-        if (headerText.toLowerCase() === fieldName.toLowerCase()) {
+      const headerMatch = lines[i].match(/^###\s+(.+)$/);
+      if (headerMatch) {
+        const headerText = headerMatch[1].trim();
+        // Use case-insensitive comparison and handle variations
+        if (headerText.toLowerCase() === fieldName.toLowerCase() || 
+            headerText.toLowerCase().replace(/\s+/g, ' ') === fieldName.toLowerCase().replace(/\s+/g, ' ')) {
           // Found the field header, look for "Current status:" in the next few lines
-          for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
-            const statusMatch = lines[j].match(/^Current status:\s*(.+)$/i);
+          for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
+            // Try multiple patterns
+            let statusMatch = lines[j].match(/^Current status:\s*(.+)$/i);
+            if (!statusMatch) {
+              // Try without colon
+              statusMatch = lines[j].match(/^Current status\s+(.+)$/i);
+            }
+            if (!statusMatch) {
+              // Try just the value on a line after empty line
+              if (lines[j].trim() && !lines[j].match(/^###|^---|^\*/) && lines[j-1] && lines[j-1].trim() === '') {
+                statusMatch = [null, lines[j].trim()];
+              }
+            }
+            
             if (statusMatch) {
               const value = statusMatch[1].trim();
-              // Update the status (including NONE, TBD, N/A)
-              node.status[field] = value;
-              break;
+              // Update the status (including NONE, TBD, N/A, and any other value)
+              if (value) {
+                node.status[field] = value;
+                found = true;
+                foundCount++;
+                break;
+              }
             }
             // Stop if we hit another header or horizontal rule
             if (lines[j].match(/^###|^---/)) break;
@@ -938,12 +964,31 @@ function parseAndUpdateNodeStatus(node, markdown) {
         }
       }
     }
+    
+    // If not found with header pattern, try alternative: look for field name in bold followed by value
+    if (!found) {
+      const boldPattern = new RegExp(`\\*\\*${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*[\\s:]*([^\\n\\*]+)`, 'i');
+      const match = markdown.match(boldPattern);
+      if (match && match[1]) {
+        const value = match[1].trim();
+        if (value) {
+          node.status[field] = value;
+          foundCount++;
+        }
+      }
+    }
   });
+  
+  console.log(`Parsed ${foundCount} status fields from markdown for ${node.name}`);
   
   // Also update the data object to reflect changes
   const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
   if (nodeIndex !== -1) {
     data.nodes[nodeIndex].status = { ...node.status };
+    // Force update the node reference
+    if (window.currentNode && window.currentNode.id === node.id) {
+      window.currentNode.status = { ...node.status };
+    }
   }
 }
 
