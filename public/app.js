@@ -627,13 +627,8 @@ window.openNodeDocument = async function(node, fieldKey) {
   const editor = document.getElementById('markdownEditor');
   const title = document.getElementById('editorTitle');
   const subtitle = document.getElementById('editorSubtitle');
-  const textarea = document.getElementById('markdownEditorTextarea');
-  const preview = document.getElementById('markdownPreview');
-  const status = document.getElementById('editorStatus');
-  
-  title.textContent = `${node.name} — ${humanize(fieldKey)}`;
+  title.textContent = `${node.name}`;
   subtitle.textContent = `${node.type} • ${docPath}`;
-  status.textContent = 'Loading...';
   
   editor.classList.remove('hidden');
   
@@ -646,43 +641,33 @@ window.openNodeDocument = async function(node, fieldKey) {
       }
     });
     
-    let content = '';
+    let markdownContent = '';
+    const statusFields = node.type === "CPD" 
+      ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
+      : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
     
     if (checkResponse.ok) {
       const fileData = await checkResponse.json();
-      content = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
+      const fullContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
       window.editorState.fileSha = fileData.sha;
+      
+      // Parse existing markdown to extract content (skip status section)
+      markdownContent = extractContentFromMarkdown(fullContent, statusFields);
+      
+      // Parse status values from existing markdown
+      parseStatusFromMarkdown(node, fullContent, statusFields);
+      
       status.textContent = 'Loaded from GitHub';
     } else if (checkResponse.status === 404) {
-      // File doesn't exist - create default content with ALL status fields
-      const statusFields = node.type === "CPD" 
-        ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
-        : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
-      
-      let fieldsContent = '';
-      statusFields.forEach(field => {
-        const fieldName = humanize(field);
-        const currentValue = (node.status && node.status[field]) || "NONE";
-        fieldsContent += `### ${fieldName}\n\nCurrent status: ${currentValue}\n\n---\n\n`;
-      });
-      
-      content = `# ${node.name} (${node.type})
-
-${node.type === "CPD" ? "## Product Maturity Signals" : "## Concept Maturity Signals"}
-
-${fieldsContent}
-
-*This document tracks all status fields for ${node.name}.*
-
-*Last updated: ${new Date().toISOString().split('T')[0]}*
-`;
+      // New file - use current node status
+      markdownContent = `## Notes\n\n*Add your notes and documentation here.*\n\n`;
       status.textContent = 'New document (will be created on save)';
     } else {
       throw new Error(`Failed to load document: ${checkResponse.statusText}`);
     }
     
-    textarea.value = content;
-    updateMarkdownPreview(content);
+    // Render status dropdowns and content editor
+    renderEditorWithStatusFields(node, statusFields, markdownContent);
     
     // Mark task as complete
     markFieldTaskComplete(node.id, fieldKey);
@@ -690,15 +675,9 @@ ${fieldsContent}
   } catch (error) {
     status.textContent = `Error: ${error.message}`;
     status.style.color = 'var(--bad)';
+    const textarea = document.getElementById('markdownEditorTextarea');
     textarea.value = `# Error loading document\n\n${error.message}`;
   }
-  
-  // Setup event listeners
-  textarea.addEventListener('input', (e) => {
-    updateMarkdownPreview(e.target.value);
-    status.textContent = 'Unsaved changes';
-    status.style.color = 'var(--warn)';
-  });
   
   // Close button
   document.getElementById('editorClose').onclick = () => {
@@ -718,11 +697,22 @@ ${fieldsContent}
   };
 };
 
-function updateMarkdownPreview(markdown) {
+function updateMarkdownPreview() {
+  if (!window.editorState) return;
+  
+  const { node } = window.editorState;
+  const statusFields = node.type === "CPD" 
+    ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
+    : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
+  
+  const textarea = document.getElementById('markdownEditorTextarea');
+  const content = textarea.value;
+  const assembled = assembleMarkdownFromEditor(node, statusFields, content);
+  
   const preview = document.getElementById('markdownPreview');
   
   // Split into lines for better processing
-  const lines = markdown.split('\n');
+  const lines = assembled.split('\n');
   let html = '';
   let inList = false;
   let inCodeBlock = false;
@@ -850,8 +840,8 @@ async function saveMarkdownDocument() {
   
   try {
     const body = {
-      message: `Update ${node.type} document: ${node.name} — ${humanize(window.editorState.fieldKey)}`,
-      content: btoa(unescape(encodeURIComponent(content))),
+      message: `Update ${node.type} document: ${node.name}`,
+      content: btoa(unescape(encodeURIComponent(assembledMarkdown))),
       branch: branch
     };
     
@@ -880,21 +870,15 @@ async function saveMarkdownDocument() {
     status.textContent = '✅ Saved to GitHub';
     status.style.color = 'rgba(153, 255, 153, 0.9)';
     
-    // Try to parse status updates from markdown and update node
-    parseAndUpdateNodeStatus(node, content);
-    
-    // Update the node in the data array - make sure we use the updated node with parsed status
+    // Update the node in the data array with current status values
     const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
     if (nodeIndex !== -1) {
-      // Merge the parsed status into the existing node
       data.nodes[nodeIndex].status = { ...node.status };
-      // Update the reference
       window.currentNode = data.nodes[nodeIndex];
     }
     
     // Force refresh the node view to show updated status
     if (window.currentNode && window.currentNode.id === node.id) {
-      // Small delay to ensure DOM updates
       setTimeout(() => {
         showNode(window.currentNode);
       }, 100);
@@ -906,6 +890,216 @@ async function saveMarkdownDocument() {
   } finally {
     saveButton.disabled = false;
   }
+}
+
+function renderEditorWithStatusFields(node, statusFields, markdownContent) {
+  const container = document.getElementById('statusFieldsContainer');
+  const textarea = document.getElementById('markdownEditorTextarea');
+  const status = document.getElementById('editorStatus');
+  
+  // Render status dropdowns
+  container.innerHTML = statusFields.map(field => {
+    const fieldName = humanize(field);
+    const currentValue = (node.status && node.status[field]) || "NONE";
+    const fieldId = `status-${field}`;
+    const isCustom = !["NONE", "TBD", "N/A", "WIP", "DONE"].includes(currentValue);
+    
+    return `
+      <div>
+        <label style="display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px;">${fieldName}</label>
+        <select id="${fieldId}" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font-size: 12px;">
+          <option value="NONE" ${currentValue === "NONE" ? "selected" : ""}>NONE</option>
+          <option value="TBD" ${currentValue === "TBD" ? "selected" : ""}>TBD</option>
+          <option value="N/A" ${currentValue === "N/A" ? "selected" : ""}>N/A</option>
+          <option value="WIP" ${currentValue === "WIP" ? "selected" : ""}>WIP</option>
+          <option value="DONE" ${currentValue === "DONE" ? "selected" : ""}>DONE</option>
+          <option value="CUSTOM" ${isCustom ? "selected" : ""}>Custom...</option>
+        </select>
+        ${isCustom ? `
+          <input type="text" id="${fieldId}-custom" value="${escapeHtml(currentValue)}" placeholder="Custom value" 
+                 style="width: 100%; margin-top: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font-size: 11px;">
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+  
+  // Set content
+  textarea.value = markdownContent;
+  
+  // Setup event listeners for status dropdowns
+  statusFields.forEach(field => {
+    const select = document.getElementById(`status-${field}`);
+    const fieldId = `status-${field}`;
+    
+    if (select) {
+      select.addEventListener('change', () => {
+        if (select.value === "CUSTOM") {
+          // Show custom input
+          const parent = select.parentElement;
+          let customInput = document.getElementById(`${fieldId}-custom`);
+          if (!customInput) {
+            customInput = document.createElement('input');
+            customInput.type = 'text';
+            customInput.id = `${fieldId}-custom`;
+            customInput.placeholder = 'Custom value';
+            customInput.style.cssText = 'width: 100%; margin-top: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font-size: 11px;';
+            parent.appendChild(customInput);
+            customInput.addEventListener('input', () => {
+              if (!node.status) node.status = {};
+              node.status[field] = customInput.value;
+              updateMarkdownPreview();
+              status.textContent = 'Unsaved changes';
+              status.style.color = 'var(--warn)';
+            });
+          }
+        } else {
+          // Hide custom input and update status
+          const customInput = document.getElementById(`${fieldId}-custom`);
+          if (customInput) customInput.remove();
+          if (!node.status) node.status = {};
+          node.status[field] = select.value;
+          updateMarkdownPreview();
+          status.textContent = 'Unsaved changes';
+          status.style.color = 'var(--warn)';
+        }
+      });
+    }
+    
+    // Handle existing custom input
+    const customInput = document.getElementById(`${fieldId}-custom`);
+    if (customInput) {
+      customInput.addEventListener('input', () => {
+        if (!node.status) node.status = {};
+        node.status[field] = customInput.value;
+        updateMarkdownPreview();
+        status.textContent = 'Unsaved changes';
+        status.style.color = 'var(--warn)';
+      });
+    }
+  });
+  
+  // Setup content editor listener
+  textarea.addEventListener('input', () => {
+    updateMarkdownPreview();
+    status.textContent = 'Unsaved changes';
+    status.style.color = 'var(--warn)';
+  });
+  
+  // Initial preview
+  updateMarkdownPreview();
+}
+
+function extractContentFromMarkdown(markdown, statusFields) {
+  // Extract content after the status section
+  const lines = markdown.split('\n');
+  let inStatusSection = false;
+  let contentStart = -1;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Check if we're in a status field section
+    if (line.match(/^###\s+(.+)$/)) {
+      const headerText = line.replace(/^###\s+/, '').trim();
+      const isStatusField = statusFields.some(field => 
+        humanize(field).toLowerCase() === headerText.toLowerCase()
+      );
+      if (isStatusField) {
+        inStatusSection = true;
+        continue;
+      }
+    }
+    
+    // Look for content markers
+    if (line.match(/^##\s+Notes?/i) || line.match(/^##\s+Content/i)) {
+      contentStart = i;
+      break;
+    }
+    
+    // If we've left the status section and hit a main header, that's content
+    if (!inStatusSection && line.match(/^##\s+/)) {
+      contentStart = i;
+      break;
+    }
+    
+    // If we see a horizontal rule after status section, content might be after
+    if (inStatusSection && line.trim() === '---') {
+      // Check if next non-empty line is not a status field
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() && !lines[j].match(/^###|^\*/)) {
+          contentStart = j;
+          break;
+        }
+      }
+      if (contentStart !== -1) break;
+    }
+  }
+  
+  if (contentStart === -1) {
+    // No clear content section, return everything after status fields
+    let lastStatusEnd = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].match(/^---/)) {
+        lastStatusEnd = i + 1;
+        break;
+      }
+    }
+    // Skip metadata lines at the end
+    while (lastStatusEnd < lines.length && lines[lastStatusEnd].match(/^\*|^$/)) {
+      lastStatusEnd++;
+    }
+    return lines.slice(lastStatusEnd).join('\n').trim() || '## Notes\n\n*Add your notes and documentation here.*\n\n';
+  }
+  
+  return lines.slice(contentStart).join('\n').trim() || '## Notes\n\n*Add your notes and documentation here.*\n\n';
+}
+
+function parseStatusFromMarkdown(node, markdown, statusFields) {
+  // Quick parse to get current status values for dropdowns
+  if (!node.status) node.status = {};
+  
+  const lines = markdown.split('\n');
+  statusFields.forEach(field => {
+    const fieldName = humanize(field);
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].match(/^###\s+(.+)$/)) {
+        const headerText = lines[i].replace(/^###\s+/, '').trim();
+        if (headerText.toLowerCase() === fieldName.toLowerCase()) {
+          for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+            const statusMatch = lines[j].match(/^Current status:\s*(.+)$/i);
+            if (statusMatch) {
+              node.status[field] = statusMatch[1].trim();
+              break;
+            }
+            if (lines[j].match(/^###|^---/)) break;
+          }
+          break;
+        }
+      }
+    }
+  });
+}
+
+function assembleMarkdownFromEditor(node, statusFields, content) {
+  // Assemble final markdown: status section + content
+  let statusSection = '';
+  statusFields.forEach(field => {
+    const fieldName = humanize(field);
+    const value = (node.status && node.status[field]) || "NONE";
+    statusSection += `### ${fieldName}\n\nCurrent status: ${value}\n\n---\n\n`;
+  });
+  
+  return `# ${node.name} (${node.type})
+
+${node.type === "CPD" ? "## Product Maturity Signals" : "## Concept Maturity Signals"}
+
+${statusSection}
+
+${content}
+
+*Last updated: ${new Date().toISOString().split('T')[0]}*
+`;
 }
 
 function parseAndUpdateNodeStatus(node, markdown) {
