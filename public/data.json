@@ -1,42 +1,6 @@
 {
   "nodes": [
     {
-      "id": "cpd-ocr",
-      "type": "CPD",
-      "name": "Open Creator Rails (OCR)",
-      "cpd": {
-        "productName": "Open Creator Rails (OCR)",
-        "whatIs": "Open Creator Rails is a production-ready, on-chain access and monetization runtime system that makes time-limited access rights to game resources deterministically manageable and verifiable for creators and developers.",
-        "whatIsNot": [
-          "Not a research project",
-          "Not an experimentation or prototyping framework",
-          "Not a general identity or authentication product",
-          "Not a payment gateway or financial product",
-          "Not a creator marketplace or SaaS offering"
-        ],
-        "neverImplicit": "The decision of which states, data structures, and processes are irreversibly recorded on-chain must never be made implicitly.",
-        "ownership": {
-          "productOwner": "ChainSafe Systems (OCR Product)",
-          "deliveryOwner": "OCR Delivery (grant-bound)",
-          "technicalAuthority": "Core Protocol & Runtime Leads"
-        },
-        "decisionLevel": {
-          "implementation": "TEAM",
-          "scopePriority": "OWNER",
-          "lifecycleGoNoGo": "EXPLICIT_ONLY"
-        },
-        "lifecycle": "Growth / Early Scale",
-        "status": {
-          "customerResearchData": "NONE",
-          "valuePropositionClarity": "TBD",
-          "pricingEconomicModel": "TBD",
-          "reliabilitySLO": "NONE",
-          "securityRiskPosture": "TBD",
-          "operationalOwnership": "TBD"
-        }
-      }
-    },
-    {
       "id": "cpd-canton-mcp",
       "type": "CPD",
       "name": "Canton Network MCP Server",
