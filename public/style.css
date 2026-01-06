@@ -146,4 +146,103 @@
   .systemTitle { font-weight: 800; margin-bottom: 4px; }
   .systemText { color: var(--muted); font-size: 13px; line-height: 1.35; }
 
+  /* Markdown Editor Modal */
+  .markdown-editor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+  }
+  .markdown-editor-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+  }
+  .markdown-editor-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90vw;
+    max-width: 1200px;
+    height: 85vh;
+    max-height: 800px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+  .markdown-editor-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .markdown-editor-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    overflow: hidden;
+  }
+  .markdown-editor-pane {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .markdown-editor-pane:last-child {
+    border-right: none;
+  }
+  .markdown-editor-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+  }
+  #markdownPreview h1, #markdownPreview h2, #markdownPreview h3 {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  #markdownPreview h1 { font-size: 24px; }
+  #markdownPreview h2 { font-size: 20px; }
+  #markdownPreview h3 { font-size: 16px; }
+  #markdownPreview p { margin: 8px 0; }
+  #markdownPreview ul, #markdownPreview ol { margin: 8px 0; padding-left: 24px; }
+  #markdownPreview li { margin: 4px 0; }
+  #markdownPreview code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+  }
+  #markdownPreview pre {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 12px 0;
+  }
+  #markdownPreview pre code {
+    background: none;
+    padding: 0;
+  }
+  #markdownPreview strong { font-weight: 600; }
+  #markdownPreview em { font-style: italic; }
+  #markdownPreview hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 16px 0;
+  }
+
   

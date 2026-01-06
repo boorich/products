@@ -612,9 +612,32 @@ window.openNodeDocument = async function(node, fieldKey) {
     ? `docs/cpds/${node.id}.md`
     : `docs/ccds/${node.id}.md`;
   
-  const githubUrl = `https://github.com/${owner}/${repo}/blob/master/${docPath}`;
+  // Store editor state
+  window.editorState = {
+    node,
+    fieldKey,
+    owner,
+    repo,
+    docPath,
+    token,
+    fileSha: null
+  };
   
-  // Check if file exists, create if it doesn't
+  // Show editor modal
+  const editor = document.getElementById('markdownEditor');
+  const title = document.getElementById('editorTitle');
+  const subtitle = document.getElementById('editorSubtitle');
+  const textarea = document.getElementById('markdownEditorTextarea');
+  const preview = document.getElementById('markdownPreview');
+  const status = document.getElementById('editorStatus');
+  
+  title.textContent = `${node.name} — ${humanize(fieldKey)}`;
+  subtitle.textContent = `${node.type} • ${docPath}`;
+  status.textContent = 'Loading...';
+  
+  editor.classList.remove('hidden');
+  
+  // Load or create document
   try {
     const checkResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
       headers: {
@@ -623,9 +646,16 @@ window.openNodeDocument = async function(node, fieldKey) {
       }
     });
     
-    if (!checkResponse.ok && checkResponse.status === 404) {
-      // File doesn't exist - create it
-      const defaultContent = `# ${node.name} (${node.type})
+    let content = '';
+    
+    if (checkResponse.ok) {
+      const fileData = await checkResponse.json();
+      content = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
+      window.editorState.fileSha = fileData.sha;
+      status.textContent = 'Loaded from GitHub';
+    } else if (checkResponse.status === 404) {
+      // File doesn't exist - create default content
+      content = `# ${node.name} (${node.type})
 
 ## Status Field: ${humanize(fieldKey)}
 
@@ -641,55 +671,245 @@ Current status: ${(node.status && node.status[fieldKey]) || "NONE"}
 
 *Last updated: ${new Date().toISOString().split('T')[0]}*
 `;
-      
-      // Detect default branch
-      let branch = 'main';
-      try {
-        const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-          headers: {
-            'Authorization': `token ${token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        });
-        if (repoResponse.ok) {
-          const repoInfo = await repoResponse.json();
-          branch = repoInfo.default_branch || 'main';
-        }
-      } catch (e) {
-        // Fallback to 'main'
-      }
-      
-      const createResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `token ${token}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          message: `Create ${node.type} document: ${node.name}`,
-          content: btoa(unescape(encodeURIComponent(defaultContent))),
-          branch: branch
-        })
-      });
-      
-      if (!createResponse.ok) {
-        const error = await createResponse.json();
-        console.error('Failed to create document:', error);
-        // Still open the URL - user can create manually
-      }
+      status.textContent = 'New document (will be created on save)';
+    } else {
+      throw new Error(`Failed to load document: ${checkResponse.statusText}`);
     }
+    
+    textarea.value = content;
+    updateMarkdownPreview(content);
+    
+    // Mark task as complete
+    markFieldTaskComplete(node.id, fieldKey);
+    
   } catch (error) {
-    console.error('Error checking/creating document:', error);
-    // Continue to open URL anyway
+    status.textContent = `Error: ${error.message}`;
+    status.style.color = 'var(--bad)';
+    textarea.value = `# Error loading document\n\n${error.message}`;
   }
   
-  // Mark task as complete when user opens the document
-  markFieldTaskComplete(node.id, fieldKey);
+  // Setup event listeners
+  textarea.addEventListener('input', (e) => {
+    updateMarkdownPreview(e.target.value);
+    status.textContent = 'Unsaved changes';
+    status.style.color = 'var(--warn)';
+  });
   
-  // Open the document
-  window.open(githubUrl, '_blank');
+  // Close button
+  document.getElementById('editorClose').onclick = () => {
+    editor.classList.add('hidden');
+    window.editorState = null;
+  };
+  
+  // Overlay click to close
+  document.querySelector('.markdown-editor-overlay').onclick = () => {
+    editor.classList.add('hidden');
+    window.editorState = null;
+  };
+  
+  // Save button
+  document.getElementById('editorSave').onclick = async () => {
+    await saveMarkdownDocument();
+  };
 };
+
+function updateMarkdownPreview(markdown) {
+  const preview = document.getElementById('markdownPreview');
+  
+  // Split into lines for better processing
+  const lines = markdown.split('\n');
+  let html = '';
+  let inList = false;
+  let inCodeBlock = false;
+  let codeBlockContent = '';
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Code blocks
+    if (line.trim().startsWith('```')) {
+      if (inCodeBlock) {
+        html += `<pre><code>${escapeHtml(codeBlockContent)}</code></pre>`;
+        codeBlockContent = '';
+        inCodeBlock = false;
+      } else {
+        if (inList) {
+          html += '</ul>';
+          inList = false;
+        }
+        inCodeBlock = true;
+      }
+      continue;
+    }
+    
+    if (inCodeBlock) {
+      codeBlockContent += line + '\n';
+      continue;
+    }
+    
+    // Headers
+    if (line.match(/^### (.*)$/)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h3>${escapeHtml(line.replace(/^### /, ''))}</h3>`;
+      continue;
+    }
+    if (line.match(/^## (.*)$/)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h2>${escapeHtml(line.replace(/^## /, ''))}</h2>`;
+      continue;
+    }
+    if (line.match(/^# (.*)$/)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h1>${escapeHtml(line.replace(/^# /, ''))}</h1>`;
+      continue;
+    }
+    
+    // Horizontal rule
+    if (line.trim() === '---') {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<hr>';
+      continue;
+    }
+    
+    // List items
+    if (line.match(/^[\*\-] (.*)$/)) {
+      if (!inList) {
+        html += '<ul>';
+        inList = true;
+      }
+      const content = line.replace(/^[\*\-] /, '');
+      html += `<li>${processInlineMarkdown(content)}</li>`;
+      continue;
+    }
+    
+    // Regular paragraphs
+    if (line.trim() === '') {
+      if (inList) {
+        html += '</ul>';
+        inList = false;
+      }
+      continue;
+    }
+    
+    if (inList) {
+      html += '</ul>';
+      inList = false;
+    }
+    
+    html += `<p>${processInlineMarkdown(line)}</p>`;
+  }
+  
+  if (inList) html += '</ul>';
+  if (inCodeBlock) html += `<pre><code>${escapeHtml(codeBlockContent)}</code></pre>`;
+  
+  preview.innerHTML = html || '<p style="color: var(--muted); font-style: italic;">Start typing to see preview...</p>';
+}
+
+function processInlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code>$1</code>');
+}
+
+async function saveMarkdownDocument() {
+  if (!window.editorState) return;
+  
+  const { node, owner, repo, docPath, token, fileSha } = window.editorState;
+  const textarea = document.getElementById('markdownEditorTextarea');
+  const status = document.getElementById('editorStatus');
+  const saveButton = document.getElementById('editorSave');
+  
+  const content = textarea.value;
+  
+  // Detect default branch
+  let branch = 'main';
+  try {
+    const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    if (repoResponse.ok) {
+      const repoInfo = await repoResponse.json();
+      branch = repoInfo.default_branch || 'main';
+    }
+  } catch (e) {
+    // Fallback to 'main'
+  }
+  
+  saveButton.disabled = true;
+  status.textContent = 'Saving...';
+  status.style.color = 'var(--muted)';
+  
+  try {
+    const body = {
+      message: `Update ${node.type} document: ${node.name} — ${humanize(window.editorState.fieldKey)}`,
+      content: btoa(unescape(encodeURIComponent(content))),
+      branch: branch
+    };
+    
+    if (fileSha) {
+      body.sha = fileSha;
+    }
+    
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${docPath}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to save');
+    }
+    
+    const result = await response.json();
+    window.editorState.fileSha = result.content.sha;
+    
+    status.textContent = '✅ Saved to GitHub';
+    status.style.color = 'rgba(153, 255, 153, 0.9)';
+    
+    // Try to parse status updates from markdown and update node
+    parseAndUpdateNodeStatus(node, content);
+    
+    // Refresh the node view
+    if (window.currentNode && window.currentNode.id === node.id) {
+      showNode(window.currentNode);
+    }
+    
+  } catch (error) {
+    status.textContent = `❌ Error: ${error.message}`;
+    status.style.color = 'var(--bad)';
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+function parseAndUpdateNodeStatus(node, markdown) {
+  // Simple parsing: look for status field patterns like "**Field Name**: VALUE"
+  const statusFields = node.type === "CPD" 
+    ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
+    : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
+  
+  statusFields.forEach(field => {
+    const fieldName = humanize(field);
+    const regex = new RegExp(`\\*\\*${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*:?\\s*([^\\n\\*]+)`, 'i');
+    const match = markdown.match(regex);
+    if (match && match[1]) {
+      const value = match[1].trim();
+      if (value && value !== 'NONE' && value !== 'TBD' && value !== 'N/A') {
+        if (!node.status) node.status = {};
+        node.status[field] = value;
+      }
+    }
+  });
+}
 
 function markFieldTaskComplete(nodeId, fieldKey) {
   const todayKey = getTodayKey();
@@ -788,7 +1008,7 @@ function renderCPD(node) {
 panelContent.innerHTML += `
     <h3 id="status-section-header">8. Status — Product Maturity Signals</h3>
     <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
-    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CPD document in GitHub.</p>
+    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to edit the document directly in the UI.</p>
     ${renderStatusTable(status, cpdStatusFields, "CPD", node)}
     
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);">
@@ -839,7 +1059,7 @@ function renderStatusTable(status, requiredFields, nodeType = "CPD", node = null
     return `<div class="k">${escapeHtml(humanize(field))}</div><div class="v ${cls}" data-field="${fieldKey}" ${clickHandler} style="${cursorStyle}" ${titleAttr}>${escapeHtml(norm)}</div>`;
   }).join("");
   return `<div class="kv" data-status-section="true">${html}</div>`;
-}
+  }
 
 function renderCCD(node) {
   const c = node.ccd;
@@ -873,7 +1093,7 @@ function renderCCD(node) {
 
     <h3>8. Status — Concept Maturity Signals</h3>
     <p class="statusExplanation">CCDs do not imply a product commitment. The status fields below indicate where this concept stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable. These values are signals of maturity, not failure.</p>
-    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CCD document in GitHub.</p>
+    <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to edit the document directly in the UI.</p>
     ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"], "CCD", node)}
     
     <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);">
