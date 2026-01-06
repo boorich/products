@@ -720,6 +720,12 @@ panelContent.innerHTML += `
     <p class="statusExplanation">CPDs carry responsibility and risk. The status fields below indicate where this product stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable.</p>
     <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CPD document in GitHub.</p>
     ${renderStatusTable(status, cpdStatusFields, "CPD", node)}
+    
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);">
+      <button onclick="deleteNode(window.currentNode)" style="width: 100%; padding: 10px; background: rgba(255, 102, 122, 0.15); border: 1px solid rgba(255, 102, 122, 0.4); border-radius: 6px; color: var(--bad); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.background='rgba(255, 102, 122, 0.25)'" onmouseout="this.style.background='rgba(255, 102, 122, 0.15)'">
+        🗑️ Delete Node
+      </button>
+    </div>
   `;
 }
 
@@ -799,6 +805,12 @@ function renderCCD(node) {
     <p class="statusExplanation">CCDs do not imply a product commitment. The status fields below indicate where this concept stands in its maturity journey. <strong>NONE</strong> means the field is consciously absent (early stage or not applicable yet). <strong>TBD</strong> means open work or a decision is pending. <strong>N/A</strong> means the field is structurally not applicable. These values are signals of maturity, not failure.</p>
     <p style="font-size: 11px; color: var(--muted); margin-top: 8px; margin-bottom: 12px;">💡 Click any status field to open/edit the CCD document in GitHub.</p>
     ${renderStatusTable(c.status || node.status || {}, ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"], "CCD", node)}
+    
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);">
+      <button onclick="deleteNode(window.currentNode)" style="width: 100%; padding: 10px; background: rgba(255, 102, 122, 0.15); border: 1px solid rgba(255, 102, 122, 0.4); border-radius: 6px; color: var(--bad); cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.background='rgba(255, 102, 122, 0.25)'" onmouseout="this.style.background='rgba(255, 102, 122, 0.15)'">
+        🗑️ Delete Node
+      </button>
+    </div>
   `;
 }
 
@@ -1704,6 +1716,156 @@ window.setupGitHubAuth = function() {
       alert(`❌ Setup failed: ${error.message}`);
     }
   });
+};
+
+window.deleteNode = async function(node) {
+  if (!node || !node.id) {
+    alert("No node selected.");
+    return;
+  }
+  
+  // Confirmation
+  const confirmed = confirm(`Are you sure you want to delete "${node.name}" (${node.type})?\n\nThis will:\n- Remove the node from the graph\n- Remove all links connected to this node\n- Update data.json in GitHub\n\nThis action cannot be undone.`);
+  if (!confirmed) return;
+  
+  const token = localStorage.getItem('githubToken');
+  const repoStr = localStorage.getItem('githubRepo');
+  
+  if (!token || !repoStr) {
+    alert("GitHub integration not configured. Please set it up first (Create New → Commit to GitHub).");
+    return;
+  }
+  
+  const { owner, repo } = JSON.parse(repoStr);
+  
+  // Optimistic update: Remove from local data immediately
+  const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
+  if (nodeIndex !== -1) {
+    data.nodes.splice(nodeIndex, 1);
+  }
+  
+  // Remove all links referencing this node
+  data.links = data.links.filter(link => {
+    const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+    const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+    return sourceId !== node.id && targetId !== node.id;
+  });
+  
+  // Re-render graph immediately
+  render();
+  
+  // Hide panel
+  panelContent.classList.add("hidden");
+  document.querySelector(".panelEmpty")?.classList?.remove("hidden");
+  
+  // Show loading state
+  panelErrors.classList.remove("hidden");
+  panelErrors.innerHTML = `
+    <div style="color: var(--muted);">
+      <strong>🗑️ Deleting node...</strong><br>
+      Updating data.json in GitHub...
+    </div>
+  `;
+  
+  try {
+    // Step 1: Get current data.json file
+    const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!getFileResponse.ok) {
+      throw new Error(`Failed to get data.json: ${getFileResponse.statusText}`);
+    }
+    
+    const fileData = await getFileResponse.json();
+    const decodedContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
+    const currentContent = JSON.parse(decodedContent);
+    
+    // Step 2: Remove node from data
+    currentContent.nodes = currentContent.nodes.filter(n => n.id !== node.id);
+    
+    // Step 3: Remove all links referencing this node
+    currentContent.links = currentContent.links.filter(link => {
+      const sourceId = typeof link.source === 'string' ? link.source : (link.source?.id || link.source);
+      const targetId = typeof link.target === 'string' ? link.target : (link.target?.id || link.target);
+      return sourceId !== node.id && targetId !== node.id;
+    });
+    
+    // Step 4: Commit the updated file
+    const newContent = JSON.stringify(currentContent, null, 2);
+    const commitMessage = `Delete ${node.type}: ${node.name}`;
+    
+    // Detect default branch
+    let branch = 'main';
+    try {
+      const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (repoResponse.ok) {
+        const repoInfo = await repoResponse.json();
+        branch = repoInfo.default_branch || 'main';
+      }
+    } catch (e) {
+      // Fallback to 'main'
+    }
+    
+    const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: commitMessage,
+        content: btoa(unescape(encodeURIComponent(newContent))),
+        sha: fileData.sha,
+        branch: branch
+      })
+    });
+    
+    if (!commitResponse.ok) {
+      const error = await commitResponse.json();
+      throw new Error(error.message || `Commit failed: ${commitResponse.statusText}`);
+    }
+    
+    const commitResult = await commitResponse.json();
+    
+    // Success!
+    panelErrors.innerHTML = `
+      <div style="color: rgba(153, 255, 153, 0.9);">
+        <strong>✅ Node deleted successfully!</strong><br>
+        <span style="font-size: 11px; color: var(--muted);">
+          Commit: <a href="${commitResult.commit.html_url}" target="_blank" style="color: rgba(102, 204, 255, 0.8);">${commitResult.commit.sha.substring(0, 7)}</a><br>
+          The graph will update after the site rebuilds (usually within a minute).
+        </span>
+      </div>
+    `;
+    
+    // Re-render routines (tasks may have changed)
+    renderRoutines();
+    
+  } catch (error) {
+    // Revert optimistic update on error
+    if (nodeIndex !== -1) {
+      data.nodes.splice(nodeIndex, 0, node);
+    }
+    render();
+    
+    panelErrors.innerHTML = `
+      <div style="color: var(--bad);">
+        <strong>❌ Delete failed</strong><br>
+        <span style="font-size: 11px;">${escapeHtml(error.message)}</span><br>
+        <span style="font-size: 11px; color: var(--muted);">The node has been restored in the graph.</span>
+      </div>
+    `;
+  }
 };
 
 window.commitToGitHub = async function() {
