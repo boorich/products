@@ -1718,6 +1718,62 @@ window.setupGitHubAuth = function() {
   });
 };
 
+// Helper function to commit with automatic retry on SHA conflicts
+async function commitWithRetry(owner, repo, token, branch, updateFn, commitMessage, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Always fetch the latest file to get current SHA
+    const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!getFileResponse.ok) {
+      throw new Error(`Failed to get data.json: ${getFileResponse.statusText}`);
+    }
+    
+    const fileData = await getFileResponse.json();
+    const decodedContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
+    const currentContent = JSON.parse(decodedContent);
+    
+    // Apply the update function (add node, remove node, etc.)
+    const updatedContent = updateFn(currentContent);
+    const newContent = JSON.stringify(updatedContent, null, 2);
+    
+    // Try to commit
+    const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: commitMessage,
+        content: btoa(unescape(encodeURIComponent(newContent))),
+        sha: fileData.sha, // Use the latest SHA we just fetched
+        branch: branch
+      })
+    });
+    
+    if (commitResponse.ok) {
+      return await commitResponse.json();
+    }
+    
+    // If it failed, check if it's a SHA conflict
+    const error = await commitResponse.json();
+    if (error.message && error.message.includes('sha') && attempt < maxRetries - 1) {
+      // SHA conflict - wait a bit and retry (will fetch latest SHA on next iteration)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      continue;
+    }
+    
+    // Other error or max retries reached
+    throw new Error(error.message || `Commit failed: ${commitResponse.statusText}`);
+  }
+}
+
 window.deleteNode = async function(node) {
   if (!node || !node.id) {
     alert("No node selected.");
@@ -1785,74 +1841,42 @@ window.deleteNode = async function(node) {
     // Then use setTimeout to let the browser paint
     setTimeout(async () => {
     try {
-    // Step 1: Get current data.json file
-    const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json'
-      }
-    });
-    
-    if (!getFileResponse.ok) {
-      throw new Error(`Failed to get data.json: ${getFileResponse.statusText}`);
-    }
-    
-    const fileData = await getFileResponse.json();
-    const decodedContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
-    const currentContent = JSON.parse(decodedContent);
-    
-    // Step 2: Remove node from data
-    currentContent.nodes = currentContent.nodes.filter(n => n.id !== node.id);
-    
-    // Step 3: Remove all links referencing this node
-    currentContent.links = currentContent.links.filter(link => {
-      const sourceId = typeof link.source === 'string' ? link.source : (link.source?.id || link.source);
-      const targetId = typeof link.target === 'string' ? link.target : (link.target?.id || link.target);
-      return sourceId !== node.id && targetId !== node.id;
-    });
-    
-    // Step 4: Commit the updated file
-    const newContent = JSON.stringify(currentContent, null, 2);
-    const commitMessage = `Delete ${node.type}: ${node.name}`;
-    
-    // Detect default branch
-    let branch = 'main';
-    try {
-      const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-        headers: {
-          'Authorization': `token ${token}`,
-          'Accept': 'application/vnd.github.v3+json'
+      // Detect default branch
+      let branch = 'main';
+      try {
+        const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (repoResponse.ok) {
+          const repoInfo = await repoResponse.json();
+          branch = repoInfo.default_branch || 'main';
         }
-      });
-      if (repoResponse.ok) {
-        const repoInfo = await repoResponse.json();
-        branch = repoInfo.default_branch || 'main';
+      } catch (e) {
+        // Fallback to 'main'
       }
-    } catch (e) {
-      // Fallback to 'main'
-    }
-    
-    const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        message: commitMessage,
-        content: btoa(unescape(encodeURIComponent(newContent))),
-        sha: fileData.sha,
-        branch: branch
-      })
-    });
-    
-    if (!commitResponse.ok) {
-      const error = await commitResponse.json();
-      throw new Error(error.message || `Commit failed: ${commitResponse.statusText}`);
-    }
-    
-    const commitResult = await commitResponse.json();
+      
+      // Use retry helper to always work with latest file
+      const commitResult = await commitWithRetry(
+        owner,
+        repo,
+        token,
+        branch,
+        (currentContent) => {
+          // Remove node
+          currentContent.nodes = currentContent.nodes.filter(n => n.id !== node.id);
+          // Remove all links referencing this node
+          currentContent.links = currentContent.links.filter(link => {
+            const sourceId = typeof link.source === 'string' ? link.source : (link.source?.id || link.source);
+            const targetId = typeof link.target === 'string' ? link.target : (link.target?.id || link.target);
+            return sourceId !== node.id && targetId !== node.id;
+          });
+          return currentContent;
+        },
+        `Delete ${node.type}: ${node.name}`
+      );
     
     // Success!
     panelErrors.innerHTML = `
@@ -1865,8 +1889,8 @@ window.deleteNode = async function(node) {
       </div>
     `;
     
-      // Re-render routines (tasks may have changed)
-      renderRoutines();
+    // Re-render routines (tasks may have changed)
+    renderRoutines();
       
     } catch (error) {
       // Revert optimistic update on error
@@ -1886,6 +1910,7 @@ window.deleteNode = async function(node) {
     }, 0);
   });
 };
+
 
 window.commitToGitHub = async function() {
   const token = localStorage.getItem('githubToken');
@@ -1911,31 +1936,7 @@ window.commitToGitHub = async function() {
   `;
   
   try {
-    // Step 1: Get current data.json file
-    const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json'
-      }
-    });
-    
-    if (!getFileResponse.ok) {
-      throw new Error(`Failed to get data.json: ${getFileResponse.statusText}`);
-    }
-    
-    const fileData = await getFileResponse.json();
-    // GitHub API returns base64 with possible newlines - remove them before decoding
-    const decodedContent = atob(fileData.content.replace(/\n/g, '').replace(/\r/g, ''));
-    const currentContent = JSON.parse(decodedContent);
-    
-    // Step 2: Add new node to the data
-    currentContent.nodes.push(node);
-    
-    // Step 3: Commit the updated file
-    const newContent = JSON.stringify(currentContent, null, 2);
-    const commitMessage = `Add new ${node.type}: ${node.name}`;
-    
-    // Try to detect default branch, fallback to 'main'
+    // Detect default branch
     let branch = 'main';
     try {
       const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
@@ -1952,27 +1953,24 @@ window.commitToGitHub = async function() {
       // Fallback to 'main'
     }
     
-    const commitResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
+    // Use retry helper to always work with latest file
+    const commitResult = await commitWithRetry(
+      owner,
+      repo,
+      token,
+      branch,
+      (currentContent) => {
+        // Add new node (check if it already exists to avoid duplicates)
+        const existingIndex = currentContent.nodes.findIndex(n => n.id === node.id);
+        if (existingIndex !== -1) {
+          currentContent.nodes[existingIndex] = node; // Update if exists
+        } else {
+          currentContent.nodes.push(node); // Add if new
+        }
+        return currentContent;
       },
-      body: JSON.stringify({
-        message: commitMessage,
-        content: btoa(unescape(encodeURIComponent(newContent))),
-        sha: fileData.sha,
-        branch: branch
-      })
-    });
-    
-    if (!commitResponse.ok) {
-      const error = await commitResponse.json();
-      throw new Error(error.message || `Commit failed: ${commitResponse.statusText}`);
-    }
-    
-    const commitResult = await commitResponse.json();
+      `Add new ${node.type}: ${node.name}`
+    );
     
     // Success!
     panelContent.innerHTML = `
