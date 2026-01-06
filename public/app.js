@@ -654,20 +654,25 @@ window.openNodeDocument = async function(node, fieldKey) {
       window.editorState.fileSha = fileData.sha;
       status.textContent = 'Loaded from GitHub';
     } else if (checkResponse.status === 404) {
-      // File doesn't exist - create default content
+      // File doesn't exist - create default content with ALL status fields
+      const statusFields = node.type === "CPD" 
+        ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
+        : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
+      
+      let fieldsContent = '';
+      statusFields.forEach(field => {
+        const fieldName = humanize(field);
+        const currentValue = (node.status && node.status[field]) || "NONE";
+        fieldsContent += `### ${fieldName}\n\nCurrent status: ${currentValue}\n\n---\n\n`;
+      });
+      
       content = `# ${node.name} (${node.type})
-
-## Status Field: ${humanize(fieldKey)}
 
 ${node.type === "CPD" ? "## Product Maturity Signals" : "## Concept Maturity Signals"}
 
-### ${humanize(fieldKey)}
+${fieldsContent}
 
-Current status: ${(node.status && node.status[fieldKey]) || "NONE"}
-
----
-
-*This document tracks the ${humanize(fieldKey)} status for ${node.name}.*
+*This document tracks all status fields for ${node.name}.*
 
 *Last updated: ${new Date().toISOString().split('T')[0]}*
 `;
@@ -878,6 +883,13 @@ async function saveMarkdownDocument() {
     // Try to parse status updates from markdown and update node
     parseAndUpdateNodeStatus(node, content);
     
+    // Update the node in the data array
+    const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
+    if (nodeIndex !== -1) {
+      data.nodes[nodeIndex] = { ...node };
+      window.currentNode = data.nodes[nodeIndex];
+    }
+    
     // Refresh the node view
     if (window.currentNode && window.currentNode.id === node.id) {
       showNode(window.currentNode);
@@ -892,23 +904,47 @@ async function saveMarkdownDocument() {
 }
 
 function parseAndUpdateNodeStatus(node, markdown) {
-  // Simple parsing: look for status field patterns like "**Field Name**: VALUE"
+  // Parse status fields from markdown - look for "### Field Name" followed by "Current status: VALUE"
   const statusFields = node.type === "CPD" 
     ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
     : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
   
+  if (!node.status) node.status = {};
+  
   statusFields.forEach(field => {
     const fieldName = humanize(field);
-    const regex = new RegExp(`\\*\\*${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*:?\\s*([^\\n\\*]+)`, 'i');
-    const match = markdown.match(regex);
-    if (match && match[1]) {
-      const value = match[1].trim();
-      if (value && value !== 'NONE' && value !== 'TBD' && value !== 'N/A') {
-        if (!node.status) node.status = {};
-        node.status[field] = value;
+    // Look for pattern: ### Field Name\n\nCurrent status: VALUE
+    // The field name might be in a header, then we look for "Current status:" on the next lines
+    const lines = markdown.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      // Check if this line is a header with the field name
+      if (lines[i].match(/^###\s+(.+)$/)) {
+        const headerText = lines[i].replace(/^###\s+/, '').trim();
+        if (headerText.toLowerCase() === fieldName.toLowerCase()) {
+          // Found the field header, look for "Current status:" in the next few lines
+          for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+            const statusMatch = lines[j].match(/^Current status:\s*(.+)$/i);
+            if (statusMatch) {
+              const value = statusMatch[1].trim();
+              // Update the status (including NONE, TBD, N/A)
+              node.status[field] = value;
+              break;
+            }
+            // Stop if we hit another header or horizontal rule
+            if (lines[j].match(/^###|^---/)) break;
+          }
+          break;
+        }
       }
     }
   });
+  
+  // Also update the data object to reflect changes
+  const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
+  if (nodeIndex !== -1) {
+    data.nodes[nodeIndex].status = { ...node.status };
+  }
 }
 
 function markFieldTaskComplete(nodeId, fieldKey) {
