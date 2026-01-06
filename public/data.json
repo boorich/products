@@ -143,39 +143,6 @@
           "standardizationRisk": "HIGH"
         }
       }
-    },
-    {
-      "id": "cpd-aff",
-      "type": "CCD",
-      "name": "aff",
-      "ccd": {
-        "conceptName": "aff",
-        "whatIs": "jhbjh",
-        "whatIsNot": [
-          "jhbjhb"
-        ],
-        "neverImplicit": "jhbhj",
-        "ownership": {
-          "conceptSteward": "jhbh",
-          "productResponsibility": "NONE",
-          "economicResponsibility": "NONE"
-        },
-        "relationshipRules": [
-          "Products may use ideas from this concept.",
-          "Products must not be defined by this concept.",
-          "This concept may be influenced by product reality.",
-          "This concept must not replace product decisions."
-        ],
-        "maturity": "Concept / Folklore",
-        "status": {
-          "userAudienceEvidence": "hbj",
-          "problemDefinitionClarity": "jhbjh",
-          "adoptionEvidence": "jhbj",
-          "productizationEligibility": "jhbjh",
-          "ownershipStatus": "jhbh",
-          "standardizationRisk": "jhbj"
-        }
-      }
     }
   ],
   "links": [
