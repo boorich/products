@@ -1740,6 +1740,9 @@ window.deleteNode = async function(node) {
   
   // Optimistic update: Remove from local data immediately
   const nodeIndex = data.nodes.findIndex(n => n.id === node.id);
+  const originalNodes = [...data.nodes];
+  const originalLinks = [...data.links];
+  
   if (nodeIndex !== -1) {
     data.nodes.splice(nodeIndex, 1);
   }
@@ -1751,10 +1754,20 @@ window.deleteNode = async function(node) {
     return sourceId !== node.id && targetId !== node.id;
   });
   
-  // Re-render graph immediately
+  // Hide panel immediately
+  panelContent.classList.add("hidden");
+  document.querySelector(".panelEmpty")?.classList?.remove("hidden");
+  
+  // Stop old simulation if it exists
+  if (simulation) {
+    simulation.stop();
+  }
+  
+  // Re-initialize graph completely for immediate visual update
+  initGraph();
   render();
   
-  // Hide panel
+  // Hide panel immediately
   panelContent.classList.add("hidden");
   document.querySelector(".panelEmpty")?.classList?.remove("hidden");
   
@@ -1767,7 +1780,11 @@ window.deleteNode = async function(node) {
     </div>
   `;
   
-  try {
+  // Use requestAnimationFrame to ensure UI updates before async work
+  requestAnimationFrame(() => {
+    // Then use setTimeout to let the browser paint
+    setTimeout(async () => {
+    try {
     // Step 1: Get current data.json file
     const getFileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/public/data.json`, {
       headers: {
@@ -1848,24 +1865,26 @@ window.deleteNode = async function(node) {
       </div>
     `;
     
-    // Re-render routines (tasks may have changed)
-    renderRoutines();
-    
-  } catch (error) {
-    // Revert optimistic update on error
-    if (nodeIndex !== -1) {
-      data.nodes.splice(nodeIndex, 0, node);
+      // Re-render routines (tasks may have changed)
+      renderRoutines();
+      
+    } catch (error) {
+      // Revert optimistic update on error
+      data.nodes = originalNodes;
+      data.links = originalLinks;
+      initGraph();
+      render();
+      
+      panelErrors.innerHTML = `
+        <div style="color: var(--bad);">
+          <strong>❌ Delete failed</strong><br>
+          <span style="font-size: 11px;">${escapeHtml(error.message)}</span><br>
+          <span style="font-size: 11px; color: var(--muted);">The node has been restored in the graph.</span>
+        </div>
+      `;
     }
-    render();
-    
-    panelErrors.innerHTML = `
-      <div style="color: var(--bad);">
-        <strong>❌ Delete failed</strong><br>
-        <span style="font-size: 11px;">${escapeHtml(error.message)}</span><br>
-        <span style="font-size: 11px; color: var(--muted);">The node has been restored in the graph.</span>
-      </div>
-    `;
-  }
+    }, 0);
+  });
 };
 
 window.commitToGitHub = async function() {
