@@ -815,7 +815,12 @@ async function saveMarkdownDocument() {
   const status = document.getElementById('editorStatus');
   const saveButton = document.getElementById('editorSave');
   
+  const statusFields = node.type === "CPD" 
+    ? ["customerResearchData", "valuePropositionClarity", "pricingEconomicModel", "reliabilitySLO", "securityRiskPosture", "operationalOwnership"]
+    : ["userAudienceEvidence", "problemDefinitionClarity", "adoptionEvidence", "productizationEligibility", "ownershipStatus", "standardizationRisk"];
+  
   const content = textarea.value;
+  const assembledMarkdown = assembleMarkdownFromEditor(node, statusFields, content);
   
   // Detect default branch
   let branch = 'main';
